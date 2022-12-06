@@ -1,0 +1,4 @@
+[submodule "libmupdf"]
+	path = libmupdf
+	url = ../mupdf.git
+	branch = master
