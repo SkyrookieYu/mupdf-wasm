@@ -4,36 +4,12 @@
 
 
 
-
-
 PDF Viewing
 ===============================
 
 
-Depending on your application you will require UI controls for both file operations & document manipulation. Let's start with how to open a file and present the result to your webpage.
 
-.. note::
-   Coding samples & guides within this documentation will be using the "View API" as outlined in :ref:`The View API.<view_api>`
-
-
-
-Opening a File
---------------------------
-
-
-Consider the following in your DOM:
-
-
-.. code-block:: html
-
-   <input type="file" accept=".pdf,.xps,application/pdf" onchange="openFile(event.target.files[0])">
-
-
-When the user presses on the ``input`` element a dialog for file selection will appear. When a file has been chosen by the user (note: limited to PDF & XPS files only) then a :title:`JavaScript` ``openFile`` method will trigger with the ``File`` object passed in as the only parameter.
-
-.. note::
-   We will return to what happens on the ``openFile`` method later.
-
+.. _pdf_viewing_the_document_area:
 
 
 The Document Area
@@ -53,7 +29,7 @@ For example consider an :title:`HTML` element as follows:
    <div id="pages"></div>
 
 
-With associated CSS:
+With associated :title:`CSS`:
 
 
 .. code-block:: css
@@ -97,129 +73,63 @@ The :title:`JavaScript` dependencies and SDK file structure can be see here:
 *Fig.1 : MuPDF WASM structure*
 
 
-Your solution should mirror this structure with your main HTML file importing ``mupdf-view.js`` directly:
+Your solution should mirror this structure with your main HTML file importing ``mupdf-view.js`` & ``mupdf-view-page.js`` directly:
 
 
 .. code-block:: html
 
    <script src="mupdf-view.js"></script>
+   <script src="mupdf-view-page.js"></script>
 
 
+Depending on your application you will require UI controls for both file operations & document manipulation. Let's start with how to open a file and present the result to your webpage.
 
-.. _wasm_the_mupdf_view:
+.. note::
+   Coding samples & guides within this documentation will be using the user interface API as outlined in :ref:`The MuPDF DocumentViewer API<mupdfDocumentViewerAPI>`.
 
 
+``MupdfDocumentViewer``
+-------------------------
 
-The :title:`MuPDF` view
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Your HTML should create a container object for your web worker with any required wrapped methods and your web worker will import the :title:`MuPDF WASM` library. In the sample code file ``mupdf-view.js`` we have an object called ``mupdfView`` which is responsible for this setup as follows:
+This class should be instantiated on your :title:`HTML` page as a variable. It acts as the interface to control your document.
 
 
 .. code-block:: javascript
-   :emphasize-lines: 1
-   :caption: mupdf-view.js
 
-   var mupdfView = {};
+   <script>
+      let documentViewer = new MupdfDocumentViewer(mupdfView, 0);
+   </script>
 
-   const worker = new Worker("mupdf-view-worker.js");
-   const messagePromises = new Map();
-   let lastPromiseId = 0;
 
-   mupdfView.ready = new Promise((resolve, reject) => {
-      worker.onmessage = function (event) {
-         let type = event.data[0];
-         if (type === "READY") {
-            mupdfView.wasmMemory = event.data[1];
-            let methodNames = event.data[2];
-            for (let method of methodNames)
-               mupdfView[method] = wrap(method);
-            worker.onmessage = onWorkerMessage;
-            resolve();
-         } else if (type === "ERROR") {
-            let error = event.data[1];
-            reject(new Error(error));
-         } else {
-            reject(new Error(`Unexpected first message: ${event.data}`));
-         }
-      };
-   });
+Opening a File
+--------------------------
 
-   function onWorkerMessage(event) {
-      let [ type, id, result ] = event.data;
-      if (type === "RESULT")
-         messagePromises.get(id).resolve(result);
-      else if (type === "READY")
-         messagePromises.get(id).reject(new Error("Unexpected READY message"));
-      else if (type === "ERROR") {
-         let error = new Error(result.message);
-         error.name = result.name;
-         error.stack = result.stack;
-         messagePromises.get(id).reject(error);
-      }
-      else
-         messagePromises.get(id).reject(new Error(`Unexpected result type '${type}'`));
+Once you have created a ``MupdfDocumentViewer`` instance then you are ready to open a file.
 
-      messagePromises.delete(id);
-   }
+Consider the following in your DOM:
 
-   function wrap(func) {
-      return function(...args) {
-         return new Promise(function (resolve, reject) {
-            let id = lastPromiseId++;
-            messagePromises.set(id, { resolve, reject });
-            if (args[0] instanceof ArrayBuffer)
-               worker.postMessage([func, id, args], [args[0]]);
-            else
-               worker.postMessage([func, id, args]);
-         });
-      };
-   }
 
-   mupdfView.setLogFilters = wrap("setLogFilters");
+.. code-block:: html
 
-   const wrap_openStreamFromUrl = wrap("openStreamFromUrl");
-   const wrap_openDocumentFromStream = wrap("openDocumentFromStream");
+   <input type="file" accept=".pdf,.xps,application/pdf" onchange="documentViewer.openFile(event.target.files[0])">
 
-   mupdfView.openDocumentFromUrl = async function (url, contentLength, progressive, prefetch, magic) {
-      await wrap_openStreamFromUrl(url, contentLength, progressive, prefetch);
-      return await wrap_openDocumentFromStream(magic);
-   };
+   <script src="mupdf-view.js"></script>
+   <script src="mupdf-view-page.js"></script>
+   <script>
+      let documentViewer = new MupdfDocumentViewer(mupdfView, 0);
+   </script>
 
-   mupdfView.terminate = function () { worker.terminate(); };
+
+- When the user presses on the ``input`` element a dialog for file selection will appear.
+- When a file has been chosen by the user (note: limited to PDF & XPS files only) then the :title:`JavaScript` ``documentViewer.openFile`` method will trigger with the ``File`` object passed in parameter and an editor mode of ``0`` (disabled).
+- The ``MupdfDocumentViewer`` validates that the method's parameter is indeed of type ``File``, if it isn't then an error will be thrown.
+- Assuming there is no error, the document will load & display in the dedicated ``#pages`` div (as explained in :ref:`The Document Area<pdf_viewing_the_document_area>`).
+
+See the :ref:`MuPDF DocumentViewer API<mupdfDocumentViewerAPI>` for how to interact with the document and for further information.
 
 
 
 
-
-The corresponding web worker in this case ``mupdf-view-worker.js`` is responsible for interfacing directly with the autogenerated :title:`MuPDF WASM` library file (see: Fig.1 ) & methods are triggered via :title:`JavaScript` promises which return results (or failures) as appropriate.
-
-
-
-
-``openFile``
-~~~~~~~~~~~~
-
-Earlier, we referenced a method called ``openFile`` when the user choses a file. Let's explore this further.
-
-
-As a minimum implementation the code requires to validate that the method's parameter is indeed of type ``File`` , then, using a :title:`JavaScript` promise we need to await the results of a method call to the :title:`View API` :ref:`openDocumentFromBuffer<wasm_view_api_openDocumentFromBuffer>` method before initializing the document.
-
-.. code-block:: javascript
-
-   async function openFile(file) {
-      if (file instanceof File) {
-         try {
-            await mupdfView.openDocumentFromBuffer(await file.arrayBuffer(), file.name);
-            initDocument(file.name);
-         } catch (error) {
-            MupdfDocumentViewer.showDocumentError("openFile", error, document.getElementById("pages"));
-         }
-      }
-   }
-
-
-Considering that the ``openDocumentFromBuffer`` call was successful, internally within our worker we should now have a pointer to a :title:`MuPDF` ``Document`` object. The ``initDocument`` method will be responisble for rendering this document and any other housekeeping that is required.
 
 
 ..

@@ -14,7 +14,7 @@
 The MuPDF API
 ============================
 
-This API supplies an API to the dedicated ``mupdf-view-worker``, as such the :ref:`View API<view_api>` is built on top of this API.
+This API supplies an API to the dedicated ``mupdf-view-worker``, as such the :ref:`View API<api_view_api>` is built on top of this API.
 
 A set of classes & functions are defined within a ``mupdf`` namespace object as follows:
 

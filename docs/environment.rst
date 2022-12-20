@@ -52,7 +52,7 @@ Steps to do this:
 JavaScript methodology
 --------------------------
 
-Due to the asynchronous nature of a :title:`WASM` web application it is recommended to use :title:`Web Workers` and :title:`Promises` within your application to handle the lifecycle and document events.
+Due to the asynchronous nature of a :title:`WASM` web application :title:`Web Workers` and :title:`Promises` should be used within your application to handle the lifecycle and document events.
 
 
 :title:`Web Workers`
@@ -78,7 +78,7 @@ Conclusion
 
 Sample code and development discussion will assume an environment running with the correct browser setup and with programmatic solutions which utilize the :title:`JavaScript` methodology as outlined above.
 
-Therefore the coding samples within this documentation will be using the "View API" as outlined in :ref:`The View API.<view_api>`
+Therefore the coding samples within this documentation will be using the APIs as outlined in the :ref:`Document Viewer API<api_mupdf_document_viewer_api>` and :ref:`The View API<api_view_api>`.
 
 
 
