@@ -1,8 +1,2 @@
-# Sample pdfs for testing mupdf-wasm
-samples/
-
-# Compilation artifacts
-build/
-
-# Node JS dependencies
+dist/
 node_modules/

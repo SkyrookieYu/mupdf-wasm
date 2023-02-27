@@ -12,21 +12,6 @@
         "ecmaVersion": "latest"
     },
     "rules": {
-        "indent": [
-            "warn",
-            "tab"
-        ],
-        "quotes": [
-            "warn",
-            "double"
-        ],
-        "semi": [
-          "warn",
-          "always"
-        ],
-        "no-constant-condition": "warn",
-        "no-extra-semi": "warn",
-        "no-mixed-spaces-and-tabs": "warn",
         "no-unused-vars": [
             "warn",
             { "argsIgnorePattern": "^_" }

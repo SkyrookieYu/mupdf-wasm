@@ -20,7 +20,7 @@
 // Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
 // CA 94945, U.S.A., +1(415)492-9861, for further information.
 
-/*global mupdf */
+/* global mupdf */
 
 "use strict";
 
@@ -28,26 +28,18 @@
 // We do additional fetches to these paths to have better error messages in case
 // they're missing because the user forgot to compile them.
 if (globalThis.SharedArrayBuffer != null) {
-	checkPath("mupdf-wasm.wasm");
-	checkPath("mupdf-wasm.js");
-	importScripts("mupdf-wasm.js");
+	globalThis.__filename = "../dist/mupdf-wasm-mt.js"
+	importScripts("../dist/mupdf-wasm-mt.js");
 } else {
-	checkPath("mupdf-wasm-singlethread.wasm");
-	checkPath("mupdf-wasm-singlethread.js");
-	importScripts("mupdf-wasm-singlethread.js");
+	globalThis.__filename = "../dist/mupdf-wasm.js"
+	importScripts("../dist/mupdf-wasm.js");
 }
-importScripts("lib/mupdf.js");
+
+importScripts("../src/mupdf.js");
 
 mupdf.ready
 	.then(result => postMessage(["READY", result.sharedBuffer, Object.keys(workerMethods)]))
 	.catch(error => postMessage(["ERROR", error]));
-
-function checkPath(path) {
-	fetch(path, { method: "HEAD" }).then(response => {
-		if (!response.ok)
-			postMessage(["ERROR", `Failed to load ${path}: Status ${response.status}. This likely indicates that mupdf wasn't compiled to wasm.`]);
-	});
-}
 
 // A list of RegExp objects to check function names against
 let logFilters = [];

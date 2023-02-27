@@ -1,0 +1,42 @@
+# MuPDF WebAssembly Library
+
+## Downloading
+
+If you got this project from a tarball release, you're all set.
+
+If you want to use the latest and greatest version, you need to clone it
+recursively in order to also download the mupdf library and its dependencies.
+
+	git clone --recursive git://github.com/ArtifexSoftware/mupdf-wasm
+
+## Building
+
+The WebAssembly build has only been tested on Linux at the moment. If you use
+any other platform, you are on your own.
+
+In order to build this you will need to install the Emscripten SDK in
+/opt/emsdk. If you install it elsewhere, you will need to edit the build.sh
+script to point to the appropriate location.
+
+	https://kripken.github.io/emscripten-site/docs/getting_started/downloads.html
+
+From the mupdf-wasm project, you can run build.sh to build the WebAssembly
+library. The results of the build are a mupdf-wasm.wasm binary and
+mupdf-wasm.js script, placed in the "dist/" directory.
+
+The mupdf-wasm.wasm binary is quite large, because it contains not only the
+MuPDF library code, but also the 14 core PDF fonts, various CJK mapping
+resources, and ICC profiles. In order to keep it as small as possible, it is
+built with a minimal features set that does not include CJK fonts, EPUB
+support, etc.
+
+In src/mupdf.js is a module that provides a usable Javascript API on top of
+this WASM binary. This library works both in "node" and in browsers.
+
+## Using
+
+The example script in viewer/mupdf-view.html shows how to use the MuPDF
+WebAssembly Library to create a PDF viewer in the browser.
+
+Another example script is src/mutool.js which re-implements many of the usual
+mutool commands using this library.

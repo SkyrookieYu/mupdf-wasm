@@ -1,6 +1,6 @@
-// Copyright (C) 2004-2022 Artifex Software, Inc.
+// Copyright (C) 2004-2023 Artifex Software, Inc.
 //
-// This file is part of MuPDF.
+// This file is part of MuPDF WASM Library.
 //
 // MuPDF is free software: you can redistribute it and/or modify it under the
 // terms of the GNU Affero General Public License as published by the Free
@@ -34,6 +34,7 @@ static fz_matrix out_matrix;
 static fz_point out_points[2];
 
 // TODO - instrument fz_throw to include call stack
+__attribute__((noinline))
 void wasm_rethrow(fz_context *ctx)
 {
 	if (fz_caught(ctx) == FZ_ERROR_TRYLATER)

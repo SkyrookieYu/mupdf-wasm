@@ -1,23 +1,28 @@
 {
-  "name": "muwasm",
-  "version": "0.1.0",
-  "description": "JS port of mupdf",
-  "main": "lib/mupdf.js",
-  "repository": "http://git.ghostscript.com/?p=mupdf.git",
+  "name": "mupdf",
+  "version": "0.0.1",
+  "description": "MuPDF WASM Library",
   "author": "Artifex Software, Inc.",
-  "license": "AGPL",
-  "engines": {
-    "node": ">=18.4.0"
+  "homepage": "https://mupdf.com/",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArtifexSoftware/mupdf-wasm.git"
   },
+  "bugs": {
+    "url": "https://github.com/ArtifexSoftware/mupdf-wasm/issues"
+  },
+  "main": "src/mupdf.js",
+  "files": [
+    "dist/mupdf-wasm.*",
+    "src/*.js"
+  ],
   "scripts": {
-    "server": "node test-server.js",
-    "lint": "eslint .",
-    "test": "jest"
+    "build": "bash build.sh",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "devDependencies": {
-    "chai": "^4.3.6",
-    "eslint": "^8.16.0",
-    "express": "^4.18.1",
-    "jest": "^28.1.1"
-  }
+  "keywords": [
+    "mupdf",
+    "pdf"
+  ]
 }

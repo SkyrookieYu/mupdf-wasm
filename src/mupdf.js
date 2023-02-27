@@ -1,6 +1,6 @@
-// Copyright (C) 2004-2022 Artifex Software, Inc.
+// Copyright (C) 2004-2023 Artifex Software, Inc.
 //
-// This file is part of MuPDF.
+// This file is part of MuPDF WASM Library.
 //
 // MuPDF is free software: you can redistribute it and/or modify it under the
 // terms of the GNU Affero General Public License as published by the Free
@@ -22,14 +22,14 @@
 
 "use strict";
 
+var libmupdf;
+
 // If running in Node.js environment
 if (typeof require === "function") {
-	var libmupdf;
-	if (globalThis.SharedArrayBuffer != null) {
-		libmupdf = require("../mupdf-wasm.js");
-	} else {
-		libmupdf = require("../mupdf-wasm-singlethread.js");
-	}
+	if (typeof SharedArrayBuffer === "undefined")
+		libmupdf = require("../dist/mupdf-wasm-mt.js");
+	else
+		libmupdf = require("../dist/mupdf-wasm.js");
 }
 
 function assert(pred, message) {
@@ -1413,27 +1413,21 @@ mupdf.ready = libmupdf(libmupdf_injections).then(m => {
 	mupdf.DeviceCMYK = new ColorSpace(libmupdf._wasm_device_cmyk());
 
 	if (!globalThis.crossOriginIsolated) {
-		console.warn("MuPDF: The current page is running in a non-isolated context. This means SharedArrayBuffer is not available. See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer for details.");
 		return { sharedBuffer: null };
 	}
 	if (globalThis.SharedArrayBuffer == null) {
-		console.warn("MuPDF: You browser does not implement SharedArrayBuffer.");
 		return { sharedBuffer: null };
 	}
 	if (libmupdf.wasmMemory == null) {
-		console.error("MuPDF internal error: emscripten does not export wasmMemory");
 		return { sharedBuffer: null };
 	}
 	if (!(libmupdf.wasmMemory instanceof WebAssembly.Memory) || !(libmupdf.wasmMemory.buffer instanceof SharedArrayBuffer)) {
-		console.error("MuPDF internal error: wasmMemory exported by emscripten is not a valid instance of WebAssembly.Memory");
 		return { sharedBuffer: null };
 	}
 
-	console.log("MuPDF: WASM module running in cross-origin isolated context")
 	return { sharedBuffer: libmupdf.wasmMemory.buffer }
 });
 
 // If running in Node.js environment
-if (typeof require === "function") {
+if (typeof require === "function")
 	module.exports = mupdf;
-}
