@@ -20,73 +20,74 @@
 // Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
 // CA 94945, U.S.A., +1(415)492-9861, for further information.
 
-"use strict";
+"use strict"
 
-var mupdfView = {};
+var mupdfView = {}
 
-const worker = new Worker("mupdf-view-worker.js");
-const messagePromises = new Map();
-let lastPromiseId = 0;
+const worker = new Worker("mupdf-view-worker.js")
+const messagePromises = new Map()
+let lastPromiseId = 0
 
 mupdfView.ready = new Promise((resolve, reject) => {
 	worker.onmessage = function (event) {
-		let type = event.data[0];
+		let type = event.data[0]
 		if (type === "READY") {
-			mupdfView.wasmMemory = event.data[1];
-			let methodNames = event.data[2];
+			mupdfView.wasmMemory = event.data[1]
+			let methodNames = event.data[2]
 			for (let method of methodNames)
-				mupdfView[method] = wrap(method);
-			worker.onmessage = onWorkerMessage;
-			resolve();
+				mupdfView[method] = wrap(method)
+			worker.onmessage = onWorkerMessage
+			resolve()
 		} else if (type === "ERROR") {
-			let error = event.data[1];
-			reject(new Error(error));
+			let error = event.data[1]
+			reject(new Error(error))
 		} else {
-			reject(new Error(`Unexpected first message: ${event.data}`));
+			reject(new Error(`Unexpected first message: ${event.data}`))
 		}
-	};
-});
+	}
+})
 
 function onWorkerMessage(event) {
-	let [ type, id, result ] = event.data;
+	let [ type, id, result ] = event.data
 	if (type === "RESULT")
-		messagePromises.get(id).resolve(result);
+		messagePromises.get(id).resolve(result)
 	else if (type === "READY")
-		messagePromises.get(id).reject(new Error("Unexpected READY message"));
+		messagePromises.get(id).reject(new Error("Unexpected READY message"))
 	else if (type === "ERROR") {
-		let error = new Error(result.message);
-		error.name = result.name;
-		error.stack = result.stack;
-		messagePromises.get(id).reject(error);
-	}
-	else
-		messagePromises.get(id).reject(new Error(`Unexpected result type '${type}'`));
+		let error = new Error(result.message)
+		error.name = result.name
+		error.stack = result.stack
+		messagePromises.get(id).reject(error)
+	} else
+		messagePromises.get(id).reject(new Error(`Unexpected result type '${type}'`))
 
-	messagePromises.delete(id);
+	messagePromises.delete(id)
 }
 
 // TODO - Add cancelation for trylater queues
 function wrap(func) {
-	return function(...args) {
+	return function (...args) {
 		return new Promise(function (resolve, reject) {
-			let id = lastPromiseId++;
-			messagePromises.set(id, { resolve, reject });
+			let id = lastPromiseId++
+			messagePromises.set(id, { resolve, reject })
 			if (args[0] instanceof ArrayBuffer)
-				worker.postMessage([func, id, args], [args[0]]);
+				worker.postMessage([ func, id, args ], [ args[0] ])
 			else
-				worker.postMessage([func, id, args]);
-		});
-	};
+				worker.postMessage([ func, id, args ])
+		})
+	}
 }
 
-mupdfView.setLogFilters = wrap("setLogFilters");
+mupdfView.setLogFilters = wrap("setLogFilters")
 
-const wrap_openStreamFromUrl = wrap("openStreamFromUrl");
-const wrap_openDocumentFromStream = wrap("openDocumentFromStream");
+const wrap_openStreamFromUrl = wrap("openStreamFromUrl")
+const wrap_openDocumentFromStream = wrap("openDocumentFromStream")
 
 mupdfView.openDocumentFromUrl = async function (url, contentLength, progressive, prefetch, magic) {
-	await wrap_openStreamFromUrl(url, contentLength, progressive, prefetch);
-	return await wrap_openDocumentFromStream(magic);
-};
+	await wrap_openStreamFromUrl(url, contentLength, progressive, prefetch)
+	return await wrap_openDocumentFromStream(magic)
+}
 
-mupdfView.terminate = function () { worker.terminate(); };
+mupdfView.terminate = function () {
+	worker.terminate()
+}
