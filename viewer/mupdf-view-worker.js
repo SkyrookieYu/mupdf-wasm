@@ -25,8 +25,6 @@
 "use strict"
 
 // Import the WASM module
-// We do additional fetches to these paths to have better error messages in case
-// they're missing because the user forgot to compile them.
 if (globalThis.SharedArrayBuffer != null) {
 	globalThis.__filename = "../dist/mupdf-wasm-mt.js"
 	importScripts("../dist/mupdf-wasm-mt.js")
@@ -38,7 +36,7 @@ if (globalThis.SharedArrayBuffer != null) {
 importScripts("../src/mupdf.js")
 
 mupdf.ready
-	.then((result) => postMessage([ "READY", result.sharedBuffer, Object.keys(workerMethods) ]))
+	.then((result) => postMessage([ "READY", result, Object.keys(workerMethods) ]))
 	.catch((error) => postMessage([ "ERROR", error ]))
 
 // A list of RegExp objects to check function names against
@@ -110,18 +108,18 @@ workerMethods.openStreamFromUrl = function (url, contentLength, progressive, pre
 }
 
 workerMethods.openDocumentFromBuffer = function (buffer, magic) {
-	openDocument = mupdf.Document.openFromJsBuffer(buffer, magic)
+	openDocument = mupdf.Document.openDocument(buffer, magic)
 }
 
 workerMethods.openDocumentFromStream = function (magic) {
 	if (openStream == null) {
 		throw new Error("openDocumentFromStream called but no stream has been open")
 	}
-	openDocument = mupdf.Document.openFromStream(openStream, magic)
+	openDocument = mupdf.Document.openDocument(openStream, magic)
 }
 
 workerMethods.freeDocument = function () {
-	openDocument?.free()
+	openDocument?.destroy()
 	openDocument = null
 }
 
@@ -154,7 +152,7 @@ workerMethods.documentOutline = function () {
 	try {
 		return makeOutline(root)
 	} finally {
-		root.free()
+		root.destroy()
 	}
 }
 
@@ -167,121 +165,81 @@ workerMethods.countPages = function () {
 // TODO - keep page loaded?
 workerMethods.getPageSize = function (pageNumber) {
 	let page = openDocument.loadPage(pageNumber - 1)
-	let bounds = page.bounds()
+	let bounds = page.getBounds()
 	return { width: bounds.width(), height: bounds.height() }
 }
 
 workerMethods.getPageLinks = function (pageNumber) {
-	let page
-	let links_ptr
+	let page = openDocument.loadPage(pageNumber - 1)
+	let links = page.getLinks()
 
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-		links_ptr = page.getLinks()
+	return links.map((link) => {
+		const [ x0, y0, x1, y1 ] = link.getBounds()
 
-		return links_ptr.links.map((link) => {
-			const { x0, y0, x1, y1 } = link.getBounds()
+		let href
+		if (link.isExternal()) {
+			href = link.getURI()
+		} else {
+			const linkPageNumber = openDocument.resolveLink(link)
+			// TODO - move to front-end
+			// TODO - document the "+ 1" better
+			href = `#page${linkPageNumber + 1}`
+		}
 
-			let href
-			if (link.isExternal()) {
-				href = link.getURI()
-			} else {
-				const linkPageNumber = link.resolve(openDocument).pageNumber(openDocument)
-				// TODO - move to front-end
-				// TODO - document the "+ 1" better
-				href = `#page${linkPageNumber + 1}`
-			}
-
-			return {
-				x: x0,
-				y: y0,
-				w: x1 - x0,
-				h: y1 - y0,
-				href,
-			}
-		})
-	} finally {
-		page?.free()
-		links_ptr?.free()
-	}
+		return {
+			x: x0,
+			y: y0,
+			w: x1 - x0,
+			h: y1 - y0,
+			href,
+		}
+	})
 }
 
 workerMethods.getPageText = function (pageNumber) {
-	let page
-	let stextPage
-
-	let buffer
-	let output
-
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-		stextPage = page.toSTextPage()
-
-		buffer = mupdf.Buffer.empty()
-		output = mupdf.Output.withBuffer(buffer)
-
-		stextPage.printAsJson(output, 1.0)
-		output.close()
-
-		let text = buffer.toJsString()
-		return JSON.parse(text)
-	} finally {
-		output?.free()
-		buffer?.free()
-		stextPage?.free()
-		page?.free()
-	}
+	let page = openDocument.loadPage(pageNumber - 1)
+	let stextPage = page.toStructuredText()
+	return JSON.parse(stextPage.asJSON())
 }
 
 workerMethods.search = function (pageNumber, needle) {
-	let page
-
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-		const hits = page.search(needle)
-		return hits.map((searchHit) => {
-			const { x0, y0, x1, y1 } = searchHit
-
-			return {
-				x: x0,
-				y: y0,
-				w: x1 - x0,
-				h: y1 - y0,
-			}
-		})
-	} finally {
-		page?.free()
+	page = openDocument.loadPage(pageNumber - 1)
+	const hits = page.search(needle)
+	let result = []
+	for (let hit of hits) {
+		for (let quad of hit) {
+			const [ ulx, uly, urx, ury, llx, lly, lrx, lry ] = quad
+			result.push({
+				x: ulx,
+				y: uly,
+				w: urx - ulx,
+				h: lly - uly,
+			})
+		}
 	}
 }
 
 workerMethods.getPageAnnotations = function (pageNumber, dpi) {
-	let pdfPage
+	pdfPage = openDocument.loadPage(pageNumber - 1)
 
-	try {
-		pdfPage = openDocument.loadPage(pageNumber - 1)
-
-		if (pdfPage == null) {
-			return []
-		}
-
-		const annotations = pdfPage.getAnnotations()
-		const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
-
-		return annotations.annotations.map((annotation) => {
-			const { x0, y0, x1, y1 } = doc_to_screen.transformRect(annotation.bounds())
-
-			return {
-				x: x0,
-				y: y0,
-				w: x1 - x0,
-				h: y1 - y0,
-				type: annotation.annotType(),
-				ref: annotation.pointer,
-			}
-		})
-	} finally {
-		pdfPage?.free()
+	if (pdfPage == null) {
+		return []
 	}
+
+	const annotations = pdfPage.getAnnotations()
+	const doc_to_screen = [ dpi = 72, 0, 0, dpi / 72, 0, 0 ]
+
+	return annotations.map((annotation) => {
+		const [ x0, y0, x1, y1 ] = Matrix.transformRect(annotation.getBounds())
+		return {
+			x: x0,
+			y: y0,
+			w: x1 - x0,
+			h: y1 - y0,
+			type: annotation.getType(),
+			ref: annotation.pointer,
+		}
+	})
 }
 
 let currentTool = null
@@ -293,30 +251,24 @@ const lastPageRender = new Map()
 workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookiePointer) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
-	let page
-	let pixmap
-
 	// TODO - use canvas?
 
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-		pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false, cookiePointer)
+	let page = openDocument.loadPage(pageNumber - 1)
+	let pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false, cookiePointer)
 
-		if (mupdf.cookieAborted(cookiePointer)) {
-			pixmap = null
-		}
-
-		// TODO - move to frontend
-		if (pageNumber == currentTool.pageNumber)
-			currentTool.drawOnPage(pixmap, dpi)
-
-		let png = pixmap?.toPNG()
-
-		return png
-	} finally {
-		pixmap?.free()
-		page?.free()
+	if (mupdf.cookieAborted(cookiePointer)) {
+		pixmap = null
 	}
+
+	// TODO - move to frontend
+	if (pageNumber == currentTool.pageNumber)
+		currentTool.drawOnPage(pixmap, dpi)
+
+	let png = pixmap?.saveAsPNG()
+
+	pixmap?.destroy()
+
+	return png
 }
 
 workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookiePointer) {
@@ -337,14 +289,12 @@ workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookiePointer) {
 		if (pageNumber == currentTool.pageNumber)
 			currentTool.drawOnPage(pixmap, dpi)
 
-		let pixArray = pixmap.toUint8ClampedArray()
+		let pixArray = pixmap.getPixels()
 
 		let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
 
 		return imageData
 	} finally {
-		pixmap?.free()
-		page?.free()
 	}
 }
 
@@ -358,24 +308,25 @@ workerMethods.drawPageContentsAsPixmap = function (pageNumber, dpi, cookiePointe
 	try {
 		page = openDocument.loadPage(pageNumber - 1)
 
-		let bbox = page.bounds().transformed(Matrix.from(doc_to_screen))
-		pixmap = mupdf.Pixmap.withBbox(mupdf.DeviceRGB, bbox, true)
+		let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
+		pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
 		pixmap.clear()
 
-		device = Device.drawDevice(doc_to_screen, pixmap)
-		page.runPageContents(device, Matrix.identity, cookiePointer)
+		device = new mupdf.DrawDevice(doc_to_screen, pixmap)
+		page.runPageContents(device, Matrix.Identity, cookiePointer)
 		device.close()
 
 		if (mupdf.cookieAborted(cookiePointer)) {
 			return null
 		}
 
-		let pixArray = pixmap.toUint8ClampedArray()
-		let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
+		let pixArray = pixmap.getPixels()
+		let imageData = new ImageData(pixArray, pixmap.getWidth(), pixmap.getHeight())
+
+		pixmap.destroy()
 
 		return imageData
 	} finally {
-		pixmap?.free()
 		page?.free()
 		device?.free()
 	}
@@ -384,67 +335,51 @@ workerMethods.drawPageContentsAsPixmap = function (pageNumber, dpi, cookiePointe
 workerMethods.drawPageAnnotsAsPixmap = function (pageNumber, dpi, cookiePointer) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
-	let page
-	let pixmap
-	let device
+	let page = openDocument.loadPage(pageNumber - 1)
 
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
+	let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
+	let pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
+	pixmap.clear()
 
-		let bbox = page.bounds().transformed(Matrix.from(doc_to_screen))
-		pixmap = mupdf.Pixmap.withBbox(mupdf.DeviceRGB, bbox, true)
-		pixmap.clear()
+	let device = new mupdf.DrawDevice(doc_to_screen, pixmap)
+	page.runPageAnnots(device, Matrix.Identity, cookiePointer)
+	device.close()
 
-		device = Device.drawDevice(doc_to_screen, pixmap)
-		page.runPageAnnots(device, Matrix.identity, cookiePointer)
-		device.close()
-
-		if (mupdf.cookieAborted(cookiePointer)) {
-			return null
-		}
-
-		let pixArray = pixmap.toUint8ClampedArray()
-		let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
-
-		return imageData
-	} finally {
-		pixmap?.free()
-		page?.free()
-		device?.free()
+	if (mupdf.cookieAborted(cookiePointer)) {
+		pixmap.destroy()
+		return null
 	}
+
+	let pixArray = pixmap.getPixels().slice()
+	let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
+	pixmap.destroy()
+
+	return imageData
 }
 
 workerMethods.drawPageWidgetsAsPixmap = function (pageNumber, dpi, cookiePointer) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
-	let page
-	let pixmap
-	let device
+	let page = openDocument.loadPage(pageNumber - 1)
 
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
+	let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
+	let pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
+	pixmap.clear()
 
-		let bbox = page.bounds().transformed(Matrix.from(doc_to_screen))
-		pixmap = mupdf.Pixmap.withBbox(mupdf.DeviceRGB, bbox, true)
-		pixmap.clear()
+	let device = new mupdf.DrawDevice(doc_to_screen, pixmap)
+	page.runPageWidgets(device, Matrix.Identity, cookiePointer)
+	device.close()
 
-		device = Device.drawDevice(doc_to_screen, pixmap)
-		page.runPageWidgets(device, Matrix.identity, cookiePointer)
-		device.close()
-
-		if (mupdf.cookieAborted(cookiePointer)) {
-			return null
-		}
-
-		let pixArray = pixmap.toUint8ClampedArray()
-		let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
-
-		return imageData
-	} finally {
-		pixmap?.free()
-		page?.free()
-		device?.free()
+	if (mupdf.cookieAborted(cookiePointer)) {
+		pixmap.destroy()
+		return null
 	}
+
+	let pixArray = pixmap.getPixels().slice()
+	let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
+	pixmap.destroy()
+
+	return imageData
 }
 
 workerMethods.createCookie = function () {

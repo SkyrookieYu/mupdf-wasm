@@ -12,10 +12,6 @@ echo BUILDING LIBMUPDF
 make -j4 -C libmupdf build=release OS=wasm XCFLAGS="$MUPDF_OPTS" libs
 echo
 
-echo BUILDING LIBMUPDF MT
-make -j4 -C libmupdf build=release OS=wasm-mt XCFLAGS="$MUPDF_OPTS" libs
-echo
-
 echo BUILDING WASM
 emcc -o dist/mupdf-wasm.js -Ilibmupdf/include src/wrap.c \
 	-O1 -g \
@@ -25,6 +21,12 @@ emcc -o dist/mupdf-wasm.js -Ilibmupdf/include src/wrap.c \
 	-sEXPORTED_RUNTIME_METHODS='["ccall","UTF8ToString","lengthBytesUTF8","stringToUTF8"]' \
 	libmupdf/build/wasm/release/libmupdf.a \
 	libmupdf/build/wasm/release/libmupdf-third.a
+echo
+
+exit # skip building multi-threaded for now
+
+echo BUILDING LIBMUPDF MT
+make -j4 -C libmupdf build=release OS=wasm-mt XCFLAGS="$MUPDF_OPTS" libs
 echo
 
 echo BUILDING WASM MT

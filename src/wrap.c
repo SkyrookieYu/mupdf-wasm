@@ -171,12 +171,13 @@ void wasm_drop_document(fz_document *doc)
 }
 
 EMSCRIPTEN_KEEPALIVE
-char *wasm_document_title(fz_document *doc)
+char *wasm_lookup_metadata(fz_document *doc, char *key)
 {
-	static char buf[100], *result;
+	static char buf[500];
+	char *result = NULL;
 	fz_try(ctx)
 	{
-		if (fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, buf, sizeof buf) > 0)
+		if (fz_lookup_metadata(ctx, doc, key, buf, sizeof buf) > 0)
 			result = buf;
 	}
 	fz_catch(ctx)
@@ -363,11 +364,21 @@ void wasm_drop_stext_page(fz_stext_page *page) {
 		wasm_rethrow(ctx);
 }
 
-EMSCRIPTEN_KEEPALIVE void wasm_print_stext_page_as_json(fz_output *out, fz_stext_page *page, float scale) {
+EMSCRIPTEN_KEEPALIVE char *wasm_print_stext_page_as_json(fz_output *out, fz_stext_page *page, float scale) {
 	fz_try(ctx)
+	{
+		fz_buffer *buf = fz_new_buffer(ctx, 1024);
+		fz_output *out = fz_new_output_with_buffer(ctx, buf);
+		unsigned char *data;
 		fz_print_stext_page_as_json(ctx, out, page, scale);
+		fz_drop_output(ctx, out);
+		fz_terminate_buffer(ctx, buf);
+		fz_buffer_extract(ctx, buf, &data);
+		return (char*)data;
+	}
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
+	return NULL;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -387,8 +398,23 @@ pdf_page *wasm_pdf_page_from_fz_page(fz_page *page) {
 }
 
 EMSCRIPTEN_KEEPALIVE
+pdf_document *wasm_pdf_document_from_fz_document(fz_document *document) {
+	return pdf_document_from_fz_document(ctx, document);
+}
+
+EMSCRIPTEN_KEEPALIVE
 fz_link* wasm_next_link(fz_link *link) {
 	return link->next;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_link* wasm_keep_link(fz_link *link) {
+	return fz_keep_link(ctx, link);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_drop_link(fz_link *link) {
+	fz_drop_link(ctx, link);
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -444,6 +470,12 @@ char *wasm_outline_title(fz_outline *node)
 }
 
 EMSCRIPTEN_KEEPALIVE
+char *wasm_outline_uri(fz_outline *node)
+{
+	return node->uri;
+}
+
+EMSCRIPTEN_KEEPALIVE
 int wasm_outline_page(fz_document *doc, fz_outline *node)
 {
 	int pageNumber;
@@ -467,11 +499,11 @@ fz_outline *wasm_outline_next(fz_outline *node)
 }
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_search_page(fz_page *page, const char *needle, fz_quad *hit_bbox, int hit_max)
+int wasm_search_page(fz_page *page, const char *needle, int *marks, fz_quad *hit_bbox, int hit_max)
 {
 	int hitCount;
 	fz_try(ctx)
-		hitCount = fz_search_page(ctx, page, needle, NULL, hit_bbox, hit_max);
+		hitCount = fz_search_page(ctx, page, needle, marks, hit_bbox, hit_max);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 	return hitCount;
@@ -910,9 +942,9 @@ fz_buffer *wasm_read_all(fz_stream *stream, size_t initial) {
 // ANNOTATION HANDLING
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_pdf_update_page(pdf_page *page)
+int wasm_pdf_update_page(pdf_page *page)
 {
-	pdf_update_page(ctx, page);
+	return pdf_update_page(ctx, page);
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -984,6 +1016,20 @@ pdf_obj *wasm_pdf_annot_obj(pdf_annot *annot)
 {
 	// never throws
 	return pdf_annot_obj(ctx, annot);
+}
+
+EMSCRIPTEN_KEEPALIVE
+pdf_annot *wasm_pdf_first_widget(pdf_page *page)
+{
+	// never throws
+	return pdf_first_widget(ctx, page);
+}
+
+EMSCRIPTEN_KEEPALIVE
+pdf_annot *wasm_pdf_next_widget(pdf_annot *widget)
+{
+	// never throws
+	return pdf_next_widget(ctx, widget);
 }
 
 // Unused
