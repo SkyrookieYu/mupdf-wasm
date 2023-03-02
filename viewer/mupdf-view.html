@@ -220,22 +220,6 @@ div.searchHit { position:absolute; pointer-events:none; outline: 1px solid hotpi
 			<div onclick="documentViewer.showSearchBox()">Search...</div>
 		</div>
 	</div>
-	<div class="menu" id="tools-menu">
-		<div class="menu-button">Tools</div>
-		<div class="menu-popup">
-			<div onclick="setTool('CreateText')">Create Text</div>
-			<div onclick="setTool('CreateFreeText')">Create FreeText</div>
-			<div onclick="setTool('CreateLine')">Create Line</div>
-			<div onclick="setTool('CreateSquare')">Create Square</div>
-			<div onclick="setTool('CreateCircle')">Create Circle</div>
-			<div onclick="setTool('CreatePolygon')">Create Polygon</div>
-			<div onclick="setTool('CreatePolyLine')">Create PolyLine</div>
-			<div onclick="setTool('CreateStamp')">Create Stamp</div>
-			<div onclick="setTool('CreateCaret')">Create Caret</div>
-			<div onclick="setTool('CreateFileAttachment')">Create FileAttachment</div>
-			<div onclick="setTool('CreateSound')">Create Sound</div>
-		</div>
-	</div>
 	<div class="menu">
 		<div class="menu-button">View</div>
 		<div class="menu-popup">
@@ -279,19 +263,9 @@ div.searchHit { position:absolute; pointer-events:none; outline: 1px solid hotpi
 <script>
 "use strict";
 
-let editorMode;
-
 let params = new URLSearchParams(window.location.search);
 
-editorMode = params.get("editor") | 0;
-
-if (!editorMode) {
-	// FIXME - This is a very quick-and-dirty way to parameterize a menu
-	document.getElementById("tools-menu").remove();
-}
-
-let documentViewer = new MupdfDocumentViewer(mupdfView, editorMode);
-
+let documentViewer = new MupdfDocumentViewer(mupdfView)
 
 mupdfView.ready
 	.then(function () {
@@ -306,26 +280,7 @@ mupdfView.ready
 		documentViewer.showDocumentError("Load", error);
 	});
 
-function setTool(toolName) {
-	mupdfView.setEditionTool(toolName);
-}
-
-async function deleteItem() {
-	// TODO - decide which page is selected in the front end
-	// eg await mupdfView.deleteItem(lastClickedPage);
-	// TODO - find more elegant way to get dirty page
-	//let dirtyPageNumber = await mupdfView.deleteItem();
-	//dirty[dirtyPageNumber] = true;
-}
-
 window.addEventListener("keydown", function (event) {
-	if (editorMode) {
-		if (event.key == "Backspace" || event.key == "Delete") {
-			// TODO - check it doesn't happen in search mode or stuff
-			//deleteItem();
-		}
-	}
-
 	if (event.key === "Escape") {
 		documentViewer.hideSearchBox();
 	}

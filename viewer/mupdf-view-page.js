@@ -23,7 +23,8 @@
 /* eslint-disable no-unused-vars */
 
 class MupdfPageViewer {
-	constructor(worker, pageNumber, defaultSize, dpi) {
+	constructor(worker, pageNumber, defaultSize, dpi, title) {
+		this.title = title
 		this.worker = worker
 		this.pageNumber = pageNumber
 		this.size = defaultSize
@@ -110,7 +111,7 @@ class MupdfPageViewer {
 
 		this.renderPromise = null
 		this.queuedRenderArgs = null
-		this.renderCookie = null
+		this.renderCookie = 0
 
 		this.textNode = null
 		this.textPromise = null
@@ -136,7 +137,7 @@ class MupdfPageViewer {
 		let div = document.createElement("div")
 		div.classList.add("error")
 		div.textContent = error.name + ": " + error.message
-		this.clear()
+		//this.clear()
 		this.rootNode.replaceChildren(div)
 	}
 
@@ -295,7 +296,6 @@ class MupdfPageViewer {
 	}
 
 	_applyPageText(textResultObject, dpi) {
-		console.log("PAGE TEXT:", dpi)
 		this.textNode.dpi = dpi
 		let nodes = []
 		let pdf_w = []
@@ -452,7 +452,7 @@ let zoomLevels = [ 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 110, 120, 130, 1
 class MupdfDocumentHandler {
 	constructor(documentUri, initialPage, showDefaultUi) {}
 
-	static async createHandler(mupdfWorker, viewerDivs, editorMode) {
+	static async createHandler(mupdfWorker, viewerDivs) {
 		// TODO validate worker param
 
 		const handler = new MupdfDocumentHandler()
@@ -471,8 +471,6 @@ class MupdfDocumentHandler {
 
 		handler.zoomLevel = 100
 
-		handler.editorMode = editorMode
-
 		// TODO - Add a second observer with bigger margin to recycle old pages
 		handler.activePages = new Set()
 		handler.pageObserver = new IntersectionObserver(
@@ -488,7 +486,6 @@ class MupdfDocumentHandler {
 			{
 				// This means we have roughly five viewports of vertical "head start" where
 				// the page is rendered before it becomes visible
-				// See
 				rootMargin: "500% 0px",
 			}
 		)
@@ -497,14 +494,15 @@ class MupdfDocumentHandler {
 		// This is a hack to compensate for the lack of a priority queue
 		// We wait until the user has stopped scrolling to load pages.
 		let scrollTimer = null
-		document.addEventListener("scroll", (event) => {
+		handler.scrollListener = function (event) {
 			if (scrollTimer !== null)
 				clearTimeout(scrollTimer)
 			scrollTimer = setTimeout(() => {
 				scrollTimer = null
 				handler._updateView()
 			}, 50)
-		})
+		}
+		document.addEventListener("scroll", handler.scrollListener)
 
 		//const rootDiv = document.createElement("div")
 
@@ -520,7 +518,7 @@ class MupdfDocumentHandler {
 
 		let pages = new Array(pageCount)
 		for (let i = 0; i < pageCount; ++i) {
-			const page = new MupdfPageViewer(mupdfWorker, i, defaultSize, handler._dpi())
+			const page = new MupdfPageViewer(mupdfWorker, i, defaultSize, handler._dpi(), handler.title)
 			pages[i] = page
 			pagesDiv.appendChild(page.rootNode)
 			handler.pageObserver.observe(page.rootNode)
@@ -530,32 +528,6 @@ class MupdfDocumentHandler {
 			return element.tagName === "CANVAS" && element.closest("div.page") != null
 		}
 
-		if (handler.editorMode) {
-			// TODO - use pointer events, pointercancel and setPointerCapture
-			pagesDiv.onmousedown = (event) => {
-				if (!isPage(event.target))
-					return
-
-				const pageNumber = event.target.closest("div.page").pageNumber
-				pages[pageNumber].mouseDown(event, handler._dpi())
-				// TODO - remove "+ 1"
-				handler.currentSearchPage = pageNumber + 1
-			}
-			pagesDiv.onmousemove = (event) => {
-				if (!isPage(event.target))
-					return
-
-				const pageNumber = event.target.closest("div.page").pageNumber
-				pages[pageNumber].mouseMove(event, handler._dpi())
-			}
-			pagesDiv.onmouseup = (event) => {
-				if (!isPage(event.target))
-					return
-
-				const pageNumber = event.target.closest("div.page").pageNumber
-				pages[pageNumber].mouseUp(event, handler._dpi())
-			}
-		}
 		const searchDivInput = document.createElement("input")
 		searchDivInput.id = "search-text"
 		searchDivInput.type = "search"
@@ -772,23 +744,24 @@ class MupdfDocumentHandler {
 	}
 
 	clear() {
+		document.removeEventListener("scroll", this.scrollListener)
+
 		this.pagesDiv?.replaceChildren()
 		this.outlineNode?.replaceChildren()
 		this.searchDialogDiv?.replaceChildren()
 
-		this.pageObserver?.disconnect()
 		for (let page of this.pages ?? []) {
 			page.clear()
 		}
+		this.pageObserver?.disconnect()
 		this.cancelSearch()
 	}
 }
 
 // TODO - Split into separate file
 class MupdfDocumentViewer {
-	constructor(mupdfWorker, editorMode) {
+	constructor(mupdfWorker) {
 		this.mupdfWorker = mupdfWorker
-		this.editorMode = editorMode
 		this.documentHandler = null
 
 		this.placeholderDiv = document.getElementById("placeholder")
@@ -868,7 +841,7 @@ class MupdfDocumentViewer {
 	}
 
 	async _initDocument(docName) {
-		this.documentHandler = await MupdfDocumentHandler.createHandler(this.mupdfWorker, this.viewerDivs, this.editorMode)
+		this.documentHandler = await MupdfDocumentHandler.createHandler(this.mupdfWorker, this.viewerDivs)
 		this.placeholderDiv.replaceChildren()
 
 		console.log("mupdf: Loaded", JSON.stringify(docName), "with", this.documentHandler.pageCount, "pages.")
@@ -908,54 +881,6 @@ class MupdfDocumentViewer {
 
 	exitFullscreen() {
 		document.exitFullscreen()
-	}
-
-	showPageList() {
-		// TODO
-	}
-
-	hidePageList() {
-		// TODO
-	}
-
-	isPageListVisible() {
-		// TODO
-	}
-
-	save() {
-		// TODO
-	}
-
-	exportText() {
-		// TODO
-	}
-
-	print() {
-		// TODO
-	}
-
-	searchForward() {
-		// TODO
-	}
-
-	searchBackward() {
-		// TODO
-	}
-
-	canUndo() {
-		// TODO
-	}
-
-	canRedo() {
-		// TODO
-	}
-
-	undo() {
-		// TODO
-	}
-
-	redo() {
-		// TODO
 	}
 
 	zoomIn() {
@@ -1008,8 +933,6 @@ class MupdfDocumentViewer {
 
 	clear() {
 		this.documentHandler?.clear()
-
 		// TODO
-		//mupdfView.freeDocument()
 	}
 }
