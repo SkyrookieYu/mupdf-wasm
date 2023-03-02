@@ -29,7 +29,6 @@
 static fz_context *ctx;
 
 static fz_rect out_rect;
-static fz_irect out_irect;
 static fz_matrix out_matrix;
 static fz_point out_points[2];
 
@@ -38,9 +37,9 @@ __attribute__((noinline))
 void wasm_rethrow(fz_context *ctx)
 {
 	if (fz_caught(ctx) == FZ_ERROR_TRYLATER)
-		EM_ASM({ throw new libmupdf.MupdfTryLaterError("operation in progress"); });
+		EM_ASM({ throw new libmupdf.TryLaterError("operation in progress"); });
 	else
-		EM_ASM({ throw new libmupdf.MupdfError(UTF8ToString($0)); }, fz_caught_message(ctx));
+		EM_ASM({ throw new Error(UTF8ToString($0)); }, fz_caught_message(ctx));
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -364,7 +363,92 @@ void wasm_drop_stext_page(fz_stext_page *page) {
 		wasm_rethrow(ctx);
 }
 
-EMSCRIPTEN_KEEPALIVE char *wasm_print_stext_page_as_json(fz_output *out, fz_stext_page *page, float scale) {
+EMSCRIPTEN_KEEPALIVE
+fz_stext_block *wasm_stext_block(fz_stext_page *page) {
+	return page->first_block;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_stext_block_type(fz_stext_block *block) {
+	return block->type;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_rect *wasm_stext_block_bbox(fz_stext_block *block) {
+	return &block->bbox;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_stext_block *wasm_stext_block_next(fz_stext_block *block) {
+	return block->next;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_stext_line *wasm_stext_line(fz_stext_block *block) {
+	return block->u.t.first_line;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_stext_line *wasm_stext_line_next(fz_stext_line *line) {
+	return line->next;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_stext_line_wmode(fz_stext_line *line) {
+	return line->wmode;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_rect *wasm_stext_line_bbox(fz_stext_line *line) {
+	return &line->bbox;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_stext_char *wasm_stext_char(fz_stext_line *line) {
+	return line->first_char;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_stext_char *wasm_stext_char_next(fz_stext_char *ch) {
+	return ch->next;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_stext_char_rune(fz_stext_char *ch) {
+	return ch->c;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_point *wasm_stext_char_origin(fz_stext_char *ch) {
+	return &ch->origin;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_quad *wasm_stext_char_quad(fz_stext_char *ch) {
+	return &ch->quad;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float wasm_stext_char_size(fz_stext_char *ch) {
+	return ch->size;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_font *wasm_stext_char_font(fz_stext_char *ch) {
+	return ch->font;
+}
+
+EMSCRIPTEN_KEEPALIVE
+fz_font *wasm_keep_font(fz_font *font) {
+	return fz_keep_font(ctx, font);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_drop_font(fz_font *font) {
+	fz_drop_font(ctx, font);
+}
+
+EMSCRIPTEN_KEEPALIVE char *wasm_print_stext_page_as_json(fz_stext_page *page, float scale) {
 	fz_try(ctx)
 	{
 		fz_buffer *buf = fz_new_buffer(ctx, 1024);
@@ -433,34 +517,17 @@ char* wasm_link_uri(fz_link *link) {
 }
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_resolve_link_chapter(fz_document *doc, const char *uri) {
-	int chapter;
-	fz_try(ctx)
-		chapter = fz_resolve_link(ctx, doc, uri, NULL, NULL).chapter;
-	fz_catch(ctx)
-		wasm_rethrow(ctx);
-	return chapter;
-}
-
-EMSCRIPTEN_KEEPALIVE
-int wasm_resolve_link_page(fz_document *doc, const char *uri) {
+int wasm_resolve_link(fz_document *doc, const char *uri) {
+	fz_location loc;
 	int page;
 	fz_try(ctx)
-		page = fz_resolve_link(ctx, doc, uri, NULL, NULL).page;
+	{
+		loc = fz_resolve_link(ctx, doc, uri, NULL, NULL);
+		page = fz_page_number_from_location(ctx, doc, loc);
+	}
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 	return page;
-}
-
-EMSCRIPTEN_KEEPALIVE
-int wasm_page_number_from_location(fz_document *doc, int chapter, int page) {
-	fz_location link_loc = { chapter, page };
-	int page_number;
-	fz_try(ctx)
-		page_number = fz_page_number_from_location(ctx, doc, link_loc);
-	fz_catch(ctx)
-		wasm_rethrow(ctx);
-	return page_number;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -590,13 +657,33 @@ void wasm_drop_pixmap(fz_pixmap *pix)
 }
 
 EMSCRIPTEN_KEEPALIVE
-fz_irect *wasm_pixmap_bbox(fz_pixmap *pix)
+int wasm_pixmap_width(fz_pixmap *pix)
 {
-	fz_try(ctx)
-		out_irect = fz_pixmap_bbox(ctx, pix);
-	fz_catch(ctx)
-		wasm_rethrow(ctx);
-	return &out_irect;
+	return pix->w;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_pixmap_height(fz_pixmap *pix)
+{
+	return pix->h;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_pixmap_x(fz_pixmap *pix)
+{
+	return pix->x;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_pixmap_y(fz_pixmap *pix)
+{
+	return pix->y;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_pixmap_n(fz_pixmap *pix)
+{
+	return pix->n;
 }
 
 EMSCRIPTEN_KEEPALIVE

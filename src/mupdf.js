@@ -34,14 +34,19 @@ if (typeof require === "function") {
 
 function checkType(value, type) {
 	if (typeof type === "string" && typeof value !== type)
-		throw new Error("incorrect argument type")
-	if (typeof type === "object" && !(value instanceof type))
-		throw new Error("incorrect argument type")
+		throw new TypeError("expected " + type)
+	if (typeof type === "function" && !(value instanceof type))
+		throw new TypeError("expected " + type.name)
 }
 
-function assert(pred, message) {
-	if (!pred)
-		throw new Error(message || "assertion failed")
+function checkRect(value) {
+	if (!Array.isArray(value) || value.length !== 4)
+		throw new TypeError("expected rectangle")
+}
+
+function checkMatrix(value) {
+	if (!Array.isArray(value) || value.length !== 6)
+		throw new TypeError("expected rectangle")
 }
 
 function allocateUTF8(str) {
@@ -95,133 +100,109 @@ function quad_from_wasm(ptr) {
 	]
 }
 
-class MupdfError extends Error {
-	constructor(message) {
-		super(message)
-		this.name = "MupdfError"
-	}
+const Matrix = {
+	identity: [ 1, 0, 0, 1, 0, 0 ],
+	scale(sx, sy) {
+		return [ sx, 0, 0, sy, 0, 0 ]
+	},
+	translate(tx, ty) {
+		return [ 1, 0, 0, 1, tx, ty ]
+	},
+	rotate(d) {
+		while (d < 0)
+			d += 360
+		while (d >= 360)
+			d -= 360
+		let s = Math.sin((d * Math.PI) / 180)
+		let c = Math.cos((d * Math.PI) / 180)
+		return [ c, s, -s, c, 0, 0 ]
+	},
+	invert(m) {
+		checkMatrix(m)
+		let det = m[0] * m[3] - m[1] * m[2]
+		if (det > -1e-23 && det < 1e-23)
+			return m
+		let rdet = 1 / det
+		let inva = m[3] * rdet
+		let invb = -m[1] * rdet
+		let invc = -m[2] * rdet
+		let invd = m[0] * rdet
+		let inve = -m[4] * inva - m[5] * invc
+		let invf = -m[4] * invb - m[5] * invd
+		return [ inva, invb, invc, invd, inve, invf ]
+	},
+	concat(one, two) {
+		checkMatrix(one)
+		checkMatrix(two)
+		return [
+			one[0] * two[0] + one[1] * two[2],
+			one[0] * two[1] + one[1] * two[3],
+			one[2] * two[0] + one[3] * two[2],
+			one[2] * two[1] + one[3] * two[3],
+			one[4] * two[0] + one[5] * two[2] + two[4],
+			one[4] * two[1] + one[5] * two[3] + two[5],
+		]
+	},
 }
 
-class MupdfTryLaterError extends MupdfError {
-	constructor(message) {
-		super(message)
-		this.name = "MupdfTryLaterError"
-	}
-}
-
-// TODO - Port fitz geometry methods
-// See platform/java/src/com/artifex/mupdf/fitz/Point.java
-class Point {
-	constructor(x, y) {
-		assert(typeof x === "number" && !Number.isNaN(x), "invalid x argument")
-		assert(typeof y === "number" && !Number.isNaN(y), "invalid y argument")
-		this.x = x
-		this.y = y
-	}
-
-	// TODO - See 'Matrix.from' below
-	// static from(value)
-
-	static fromPtr(ptr) {
-		ptr = ptr >> 2
-		return new Point(libmupdf.HEAPF32[ptr], libmupdf.HEAPF32[ptr + 1])
-	}
-}
-
-// TODO - Port fitz geometry methods
-// See platform/java/src/com/artifex/mupdf/fitz/Rect.java
-class Rect {
-	constructor(x0, y0, x1, y1) {
-		assert(typeof x0 === "number" && !Number.isNaN(x0), "invalid x0 argument")
-		assert(typeof y0 === "number" && !Number.isNaN(y0), "invalid y0 argument")
-		assert(typeof x1 === "number" && !Number.isNaN(x1), "invalid x1 argument")
-		assert(typeof y1 === "number" && !Number.isNaN(y1), "invalid y1 argument")
-		this.x0 = x0
-		this.y0 = y0
-		this.x1 = x1
-		this.y1 = y1
-	}
-
-	// TODO - See 'Matrix.from' below
-	// static from(value)
-
-	static fromFloatRectPtr(ptr) {
-		ptr = ptr >> 2
-		return new Rect(
-			libmupdf.HEAPF32[ptr],
-			libmupdf.HEAPF32[ptr + 1],
-			libmupdf.HEAPF32[ptr + 2],
-			libmupdf.HEAPF32[ptr + 3]
+const Rect = {
+	MIN_INF_RECT: 0x80000000,
+	MAX_INF_RECT: 0x7fffff80,
+	isEmpty: function (rect) {
+		checkRect(rect)
+		return rect[0] >= rect[2] || rect[1] >= rect[3]
+	},
+	isValid: function (rect) {
+		checkRect(rect)
+		return rect[0] <= rect[2] && rect[1] <= rect[3]
+	},
+	isInfinite: function (rect) {
+		checkRect(rect)
+		return (
+			rect[0] === Rect.MIN_INF_RECT &&
+			rect[1] === Rect.MIN_INF_RECT &&
+			rect[2] === Rect.MAX_INF_RECT &&
+			rect[3] === Rect.MAX_INF_RECT
 		)
-	}
+	},
+	transform: function (rect, matrix) {
+		checkRect(rect)
+		checkMatrix(matrix)
+		var t
 
-	static fromIntRectPtr(ptr) {
-		ptr = ptr >> 2
-		return new Rect(libmupdf.HEAP32[ptr], libmupdf.HEAP32[ptr + 1], libmupdf.HEAP32[ptr + 2], libmupdf.HEAP32[ptr + 3])
-	}
+		if (Rect.isInfinite(rect))
+			return rect
+		if (!Rect.isValid(rect))
+			return rect
 
-	width() {
-		return this.x1 - this.x0
-	}
+		var ax0 = rect[0] * matrix[0]
+		var ax1 = rect[2] * matrix[0]
+		if (ax0 > ax1)
+			t = ax0, ax0 = ax1, ax1 = t
 
-	height() {
-		return this.y1 - this.y0
-	}
+		var cy0 = rect[1] * matrix[2]
+		var cy1 = rect[3] * matrix[2]
+		if (cy0 > cy1)
+			t = cy0, cy0 = cy1, cy1 = t
 
-	translated(xoff, yoff) {
-		return new Rect(this.x0 + xoff, this.y0 + yoff, this.x1 + xoff, this.y1 + yoff)
-	}
+		ax0 += cy0 + matrix[4]
+		ax1 += cy1 + matrix[4]
 
-	transformed(matrix) {
-		return matrix.transformRect(this)
-	}
-}
+		var bx0 = rect[0] * matrix[1]
+		var bx1 = rect[2] * matrix[1]
+		if (bx0 > bx1)
+			t = bx0, bx0 = bx1, bx1 = t
 
-// TODO - Port fitz geometry methods
-// See platform/java/src/com/artifex/mupdf/fitz/Matrix.java
-class Matrix {
-	constructor(a, b, c, d, e, f) {
-		this.a = a
-		this.b = b
-		this.c = c
-		this.d = d
-		this.e = e
-		this.f = f
-	}
+		var dy0 = rect[1] * matrix[3]
+		var dy1 = rect[3] * matrix[3]
+		if (dy0 > dy1)
+			t = dy0, dy0 = dy1, dy1 = t
 
-	static Identity = new Matrix(1, 0, 0, 1, 0, 0)
+		bx0 += dy0 + matrix[5]
+		bx1 += dy1 + matrix[5]
 
-	static from(value) {
-		if (value instanceof Matrix)
-			return value
-		if (Array.isArray(value) && value.length === 6)
-			return new Matrix(value[0], value[1], value[2], value[3], value[4], value[5])
-		else
-			throw new Error(`cannot create matrix from '${value}'`)
-	}
-
-	static fromPtr(ptr) {
-		ptr = ptr >> 2
-		return new Matrix(
-			libmupdf.HEAPF32[ptr],
-			libmupdf.HEAPF32[ptr + 1],
-			libmupdf.HEAPF32[ptr + 2],
-			libmupdf.HEAPF32[ptr + 3],
-			libmupdf.HEAPF32[ptr + 4],
-			libmupdf.HEAPF32[ptr + 5]
-		)
-	}
-
-	static scale(scale_x, scale_y) {
-		return Matrix.fromPtr(libmupdf._wasm_scale(scale_x, scale_y))
-	}
-
-	transformRect(rect) {
-		checkType(rect, Rect)
-		return Rect.fromFloatRectPtr(
-			libmupdf._wasm_transform_rect(rect.x0, rect.y0, rect.x1, rect.y1, this.a, this.b, this.c, this.d, this.e, this.f)
-		)
-	}
+		return [ ax0, bx0, ax1, bx1 ]
+	},
 }
 
 const finalizer = new FinalizationRegistry(f => f())
@@ -320,9 +301,10 @@ class Buffer extends Wrapper {
 }
 
 class ColorSpace extends Wrapper {
-	constructor(pointer) {
+	constructor(name, pointer) {
 		// TODO: ICC profile
 		super(pointer, libmupdf._wasm_drop_colorspace)
+		this.name = name
 	}
 }
 
@@ -352,7 +334,7 @@ class Font extends Wrapper {
 	}
 
 	advanceGlyph(gid, wmode = 0) {
-		return libmupdf._wasm_advance_glyph(this.pointer, gid, wmode))
+		return libmupdf._wasm_advance_glyph(this.pointer, gid, wmode)
 	}
 }
 
@@ -373,7 +355,7 @@ class Image extends Wrapper {
 
 class Path extends Wrapper {
 	constructor() {
-		super(libmupdf._new_path(), libmupdf._drop_path)
+		super(libmupdf._wasm_new_path(), libmupdf._wasm_drop_path)
 	}
 	getBounds() {
 		return rect_from_wasm(libmupdf._wasm_bound_path(this.pointer))
@@ -400,7 +382,7 @@ class Path extends Wrapper {
 		libmupdf._wasm_rectto(this.pointer, x1, y1, x2, y2)
 	}
 	transform(matrix) {
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_transform_path(this.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
@@ -414,14 +396,14 @@ class Path extends Wrapper {
 
 class Text extends Wrapper {
 	constructor() {
-		super(libmupdf._new_text(), libmupdf._drop_text)
+		super(libmupdf._wasm_new_text(), libmupdf._wasm_drop_text)
 	}
 	getBounds() {
 		return rect_from_wasm(libmupdf._wasm_bound_text(this.pointer))
 	}
 	showGlyph(font, trm, gid, uni, wmode = 0) {
 		checkType(font, Font)
-		checkType(trm, Array)
+		checkMatrix(trm)
 		checkType(gid, "number")
 		checkType(uni, "number")
 		libmupdf._wasm_show_glyph(
@@ -437,7 +419,7 @@ class Text extends Wrapper {
 	}
 	showString(font, trm, str, wmode = 0) {
 		checkType(font, Font)
-		checkType(trm, Array)
+		checkMatrix(trm)
 		checkType(str, "string")
 		str = allocateUTF8(str)
 		try {
@@ -474,7 +456,7 @@ class DisplayList extends Wrapper {
 	}
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_bound_display_list(this.pointer)
+		return rect_from_wasm(libmupdf._wasm_bound_display_list(this.pointer))
 	}
 
 	// TODO: run
@@ -487,7 +469,7 @@ class Pixmap extends Wrapper {
 	constructor(arg1, bbox = null, alpha = false) {
 		let pointer = arg1
 		if (arg1 instanceof ColorSpace) {
-			checkType(bbox, Array)
+			checkRect(bbox)
 			pointer = libmupdf._wasm_new_pixmap_with_bbox(arg1.pointer, bbox[0], bbox[1], bbox[2], bbox[3], 0, alpha)
 		}
 		super(pointer, libmupdf._wasm_drop_pixmap)
@@ -501,24 +483,34 @@ class Pixmap extends Wrapper {
 	}
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_pixmap_bbox(this.pointer))
+		let x = libmupdf._wasm_pixmap_x(this.pointer)
+		let y = libmupdf._wasm_pixmap_y(this.pointer)
+		let w = libmupdf._wasm_pixmap_width(this.pointer)
+		let h = libmupdf._wasm_pixmap_height(this.pointer)
+		return [ x, y, x + w, y + w ]
 	}
 
 	getWidth() {
-		let bbox = this.getBounds()
-		return bbox[2] - bbox[0]
+		return libmupdf._wasm_pixmap_width(this.pointer)
 	}
 
 	getHeight() {
-		let bbox = this.getBounds()
-		return bbox[3] - bbox[1]
+		return libmupdf._wasm_pixmap_height(this.pointer)
+	}
+
+	getX() {
+		return libmupdf._wasm_pixmap_x(this.pointer)
+	}
+
+	getY() {
+		return libmupdf._wasm_pixmap_y(this.pointer)
 	}
 
 	getPixels() {
-		let stride = libmupdf._wasm_pixmap_stride(this.pointer)
-		let n = stride * this.height
+		let s = libmupdf._wasm_pixmap_stride(this.pointer)
+		let h = libmupdf._wasm_pixmap_height(this.pointer)
 		let p = libmupdf._wasm_pixmap_samples(this.pointer)
-		return new Uint8ClampedArray(libmupdf.HEAPU8.buffer, p, n)
+		return new Uint8ClampedArray(libmupdf.HEAPU8.buffer, p, s * h)
 	}
 
 	saveAsPNG() {
@@ -576,9 +568,8 @@ class StructuredText extends Wrapper {
 							let ch_font = new Font(libmupdf._wasm_stext_char_font(ch))
 							let ch_size = libmupdf._wasm_stext_char_size(ch)
 							let ch_quad = quad_from_wasm(libmupdf._wasm_stext_char_quad(ch))
-							let ch_color = libmupdf._wasm_stext_char_color(ch)
 
-							walker.onChar(ch_rune, ch_origin, ch_font, ch_size, ch_quad, ch_color)
+							walker.onChar(ch_rune, ch_origin, ch_font, ch_size, ch_quad)
 
 							ch = libmupdf._wasm_stext_char_next(ch)
 						}
@@ -586,12 +577,12 @@ class StructuredText extends Wrapper {
 
 					if (walker.endLine)
 						walker.endLine()
+
+					line = libmupdf._wasm_stext_line_next(line)
 				}
 
 				if (walker.endTextBlock)
 					walker.endTextBlock()
-
-				line = libmupdf._wasm_stext_line_next(line)
 			}
 
 			block = libmupdf._wasm_stext_block_next(block)
@@ -605,7 +596,7 @@ class StructuredText extends Wrapper {
 
 	asJSON(scale = 1) {
 		let text_ptr = libmupdf._wasm_print_stext_page_as_json(this.pointer, scale)
-		text = libmupdf.UTF8ToString(text_ptr)
+		let text = libmupdf.UTF8ToString(text_ptr)
 		libmupdf._wasm_free(text_ptr)
 		return text
 	}
@@ -624,7 +615,7 @@ class Device extends Wrapper {
 
 class DrawDevice extends Device {
 	constructor(matrix, pixmap) {
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		checkType(pixmap, Pixmap)
 		return new Device(
 			libmupdf._wasm_new_draw_device(
@@ -810,7 +801,9 @@ class Document extends Wrapper {
 			}
 			return result
 		}
-		return to_outline(libmupdf._wasm_load_outline(this.pointer))
+		let root = libmupdf._wasm_load_outline(this.pointer)
+		if (root)
+			return to_outline(libmupdf._wasm_load_outline(this.pointer))
 	}
 
 	resolveLink(link) {
@@ -846,67 +839,77 @@ class Page extends Wrapper {
 		return rect_from_wasm(libmupdf._wasm_bound_page(this.pointer))
 	}
 
-	run(device, matrix, cookie = null) {
+	run(device, matrix, cookie = 0) {
 		checkType(device, Device)
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_run_page(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
 			matrix[4], matrix[5],
-			cookie?.pointer)
+			cookie)
 	}
 
-	runPageContents(device, matrix, cookie = null) {
+	runPageContents(device, matrix, cookie = 0) {
 		checkType(device, Device)
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_run_page_contents(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
 			matrix[4], matrix[5],
-			cookie?.pointer)
+			cookie)
 	}
 
-	runPageAnnots(device, matrix, cookie = null) {
+	runPageAnnots(device, matrix, cookie = 0) {
 		checkType(device, Device)
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_run_page_annots(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
 			matrix[4], matrix[5],
-			cookie?.pointer)
+			cookie)
 	}
 
-	runPageWidgets(device, matrix, cookie = null) {
+	runPageWidgets(device, matrix, cookie = 0) {
 		checkType(device, Device)
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_run_page_widgets(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
 			matrix[4], matrix[5],
-			cookie?.pointer)
+			cookie)
 	}
 
 	toPixmap(matrix, colorspace, alpha = false, showExtras = true) {
-		checkType(matrix, Array)
 		checkType(colorspace, ColorSpace)
+		checkMatrix(matrix)
 		let result
 		if (showExtras)
-			result = libmupdf._new_pixmap_from_page(this.pointer, matrix, colorspace, alpha)
+			result = libmupdf._wasm_new_pixmap_from_page(this.pointer,
+				matrix[0], matrix[1],
+				matrix[2], matrix[3],
+				matrix[4], matrix[5],
+				colorspace.pointer,
+				alpha)
 		else
-			result = libmupdf._new_pixmap_from_page_contents(this.pointer, matrix, colorspace, alpha)
+			result = libmupdf._wasm_new_pixmap_from_page_contents(this.pointer,
+				matrix[0], matrix[1],
+				matrix[2], matrix[3],
+				matrix[4], matrix[5],
+				colorspace.pointer,
+				alpha)
 		return new Pixmap(result)
 	}
 
 	toDisplayList(showExtras = true) {
 		let result
 		if (showExtras)
-			result = libmupdf._new_display_list_from_page(this.pointer)
+			result = libmupdf._wasm_new_display_list_from_page(this.pointer)
 		else
-			result = libmupdf._new_display_list_from_page_contents(this.pointer)
+			result = libmupdf._wasm_new_display_list_from_page_contents(this.pointer)
 		return new DisplayList(result)
 	}
 
@@ -1021,7 +1024,7 @@ class PDFPage extends Page {
 	}
 
 	createLink(bbox, uri) {
-		checkType(bbox, Array)
+		checkRect(bbox)
 		uri = allocateUTF8(uri)
 		try {
 			return new Link(libmupdf._wasm_pdf_create_link(this.pointer, bbox[0], bbox[1], bbox[2], bbox[3], uri))
@@ -1136,7 +1139,7 @@ class PDFAnnotation extends Wrapper {
 
 	run(device, matrix) {
 		checkType(device, Device)
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		libmupdf._wasm_pdf_run_annot(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
@@ -1146,7 +1149,7 @@ class PDFAnnotation extends Wrapper {
 	}
 
 	toPixmap(matrix, colorspace, alpha = false) {
-		checkType(matrix, Array)
+		checkMatrix(matrix)
 		checkType(colorspace, ColorSpace)
 		return new Pixmap(
 			libmupdf._wasm_pdf_new_pixmap_from_annot(
@@ -1334,12 +1337,12 @@ class PDFAnnotation extends Wrapper {
 	}
 
 	addVertex(point) {
-		assert(point instanceof Point, "invalid point argument")
+		checkType(point, Point)
 		libmupdf._wasm_pdf_add_annot_vertex(this.pointer, point[0], point[1])
 	}
 
 	setVertex(i, point) {
-		assert(point instanceof Point, "invalid point argument")
+		checkType(point, Point)
 		libmupdf._wasm_pdf_set_annot_vertex(this.pointer, i, point[0], point[1])
 	}
 
@@ -1356,13 +1359,13 @@ class PDFAnnotation extends Wrapper {
 	}
 
 	setModificationDate(date) {
-		assert(date instanceof Date, "invalid date argument")
+		checkType(date, Date)
 		// Date stores milliseconds since epoch, but libmupdf expects seconds
 		libmupdf._wasm_pdf_set_annot_modification_date(this.pointer, date.getTime() / 1000)
 	}
 
 	setCreationDate(date) {
-		assert(date instanceof Date, "invalid date argument")
+		checkType(date, Date)
 		// Date stores milliseconds since epoch, but libmupdf expects seconds
 		libmupdf._wasm_pdf_set_annot_creation_date(this.pointer, date.getTime() / 1000)
 	}
@@ -1476,35 +1479,6 @@ class PDFWidget extends PDFAnnotation {
 }
 
 
-
-
-
-
-
-class JobCookie extends Wrapper {
-	constructor(pointer) {
-		if (!pointer)
-			pointer = libmupdf._wasm_new_cookie()
-		super(pointer, libmupdf._wasm_free_cookie)
-	}
-
-	aborted() {
-		return libmupdf._wasm_cookie_aborted(this.pointer)
-	}
-}
-
-function createCookie() {
-	return libmupdf._wasm_new_cookie()
-}
-
-function cookieAborted(cookiePointer) {
-	return libmupdf._wasm_cookie_aborted(cookiePointer)
-}
-
-function deleteCookie(cookiePointer) {
-	libmupdf._wasm_free_cookie(cookiePointer)
-}
-
 class Stream extends Wrapper {
 	constructor(pointer, internalBuffer = null) {
 		super(pointer, libmupdf._wasm_drop_stream)
@@ -1525,7 +1499,7 @@ class Stream extends Wrapper {
 	// This takes a reference to the buffer, not a clone.
 	// Modifying the buffer after calling this function will change the returned stream's output.
 	static fromBuffer(buffer) {
-		assert(buffer instanceof Buffer, "invalid buffer argument")
+		checkType(buffer, Buffer)
 		return new Stream(libmupdf._wasm_new_stream_from_buffer(buffer.pointer), buffer)
 	}
 
@@ -1546,6 +1520,25 @@ class Stream extends Wrapper {
 
 
 // Background progressive fetch
+
+const Cookie = {
+	create() {
+		return libmupdf._wasm_new_cookie()
+	},
+	destroy(cookie) {
+		libmupdf._wasm_free_cookie(cookie)
+	},
+	isAborted(cookie) {
+		return cookie && libmupdf._wasm_cookie_aborted(cookie)
+	},
+}
+
+class TryLaterError extends Error {
+	constructor(message) {
+		super(message)
+		this.name = "TryLaterError"
+	}
+}
 
 // TODO - move in Stream
 function onFetchData(id, block, data) {
@@ -1644,6 +1637,7 @@ function fetchClose(id) {
 
 const mupdf = {
 	Matrix,
+	Rect,
 	Buffer,
 	ColorSpace,
 	Font,
@@ -1655,6 +1649,8 @@ const mupdf = {
 	DisplayListDevice,
 	Document,
 	PDFDocument,
+	Cookie,
+	TryLaterError,
 	onFetchCompleted: () => {},
 }
 
@@ -1667,18 +1663,17 @@ const libmupdf_injections = {
 	fetchOpen,
 	fetchRead,
 	fetchClose,
-	MupdfError,
-	MupdfTryLaterError,
+	TryLaterError,
 }
 
 mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	libmupdf = m
 	libmupdf._wasm_init_context()
 
-	mupdf.DeviceGray = new ColorSpace(libmupdf._wasm_device_gray())
-	mupdf.DeviceRGB = new ColorSpace(libmupdf._wasm_device_rgb())
-	mupdf.DeviceBGR = new ColorSpace(libmupdf._wasm_device_bgr())
-	mupdf.DeviceCMYK = new ColorSpace(libmupdf._wasm_device_cmyk())
+	mupdf.DeviceGray = new ColorSpace("DeviceGray", libmupdf._wasm_device_gray())
+	mupdf.DeviceRGB = new ColorSpace("DeviceRGB", libmupdf._wasm_device_rgb())
+	mupdf.DeviceBGR = new ColorSpace("DeviceBGR", libmupdf._wasm_device_bgr())
+	mupdf.DeviceCMYK = new ColorSpace("DeviceCMYK", libmupdf._wasm_device_cmyk())
 
 	if (!globalThis.crossOriginIsolated)
 		return null

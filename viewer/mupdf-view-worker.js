@@ -39,38 +39,15 @@ mupdf.ready
 	.then((result) => postMessage([ "READY", result, Object.keys(workerMethods) ]))
 	.catch((error) => postMessage([ "ERROR", error ]))
 
-// A list of RegExp objects to check function names against
-let logFilters = []
-
-function logCall(id, funcName, args) {
-	for (const filter of logFilters) {
-		if (filter.test(funcName)) {
-			console.log(`(${id}) CALL ${funcName}:`, args)
-			return
-		}
-	}
-}
-
-function logReturn(id, funcName, value) {
-	for (const filter of logFilters) {
-		if (filter.test(funcName)) {
-			console.log(`(${id}) RETURN ${funcName}:`, value)
-			return
-		}
-	}
-}
-
 onmessage = async function (event) {
 	let [ func, id, args ] = event.data
 	await mupdf.ready
 
 	try {
-		logCall(id, func, args)
 		let result = workerMethods[func](...args)
-		logReturn(id, func, result)
 		postMessage([ "RESULT", id, result ])
 	} catch (error) {
-		if (error instanceof mupdf.MupdfTryLaterError) {
+		if (error instanceof mupdf.TryLaterError) {
 			trylaterQueue.push(event)
 		} else {
 			postMessage([ "ERROR", id, { name: error.name, message: error.message, stack: error.stack } ])
@@ -103,8 +80,7 @@ workerMethods.setLogFilters = function (filters) {
 }
 
 workerMethods.openStreamFromUrl = function (url, contentLength, progressive, prefetch) {
-	openStream = mupdf.Stream.fromUrl(url, contentLength, Math.max(progressive << 10, 1 << 16), prefetch)
-	// TODO - close stream?
+	openStream = new mupdf.Stream(url, contentLength, Math.max(progressive << 10, 1 << 16), prefetch)
 }
 
 workerMethods.openDocumentFromBuffer = function (buffer, magic) {
@@ -124,36 +100,11 @@ workerMethods.freeDocument = function () {
 }
 
 workerMethods.documentTitle = function () {
-	return openDocument.title()
+	return openDocument.getMetaData(Document.META_INFO_TITLE)
 }
 
 workerMethods.documentOutline = function () {
-	const root = openDocument.loadOutline()
-
-	if (root == null)
-		return null
-
-	function makeOutline(node) {
-		let list = []
-		while (node) {
-			let entry = {
-				title: node.title(),
-				page: node.pageNumber(openDocument),
-			}
-			let down = node.down()
-			if (down)
-				entry.down = makeOutline(down)
-			list.push(entry)
-			node = node.next()
-		}
-		return list
-	}
-
-	try {
-		return makeOutline(root)
-	} finally {
-		root.destroy()
-	}
+	return openDocument.loadOutline()
 }
 
 workerMethods.countPages = function () {
@@ -166,7 +117,7 @@ workerMethods.countPages = function () {
 workerMethods.getPageSize = function (pageNumber) {
 	let page = openDocument.loadPage(pageNumber - 1)
 	let bounds = page.getBounds()
-	return { width: bounds.width(), height: bounds.height() }
+	return { width: bounds[2] - bounds[0], height: bounds[3] - bounds[1] }
 }
 
 workerMethods.getPageLinks = function (pageNumber) {
@@ -198,12 +149,12 @@ workerMethods.getPageLinks = function (pageNumber) {
 
 workerMethods.getPageText = function (pageNumber) {
 	let page = openDocument.loadPage(pageNumber - 1)
-	let stextPage = page.toStructuredText()
-	return JSON.parse(stextPage.asJSON())
+	let text = page.toStructuredText(1).asJSON()
+	return JSON.parse(text)
 }
 
 workerMethods.search = function (pageNumber, needle) {
-	page = openDocument.loadPage(pageNumber - 1)
+	let page = openDocument.loadPage(pageNumber - 1)
 	const hits = page.search(needle)
 	let result = []
 	for (let hit of hits) {
@@ -217,16 +168,17 @@ workerMethods.search = function (pageNumber, needle) {
 			})
 		}
 	}
+	return result
 }
 
 workerMethods.getPageAnnotations = function (pageNumber, dpi) {
-	pdfPage = openDocument.loadPage(pageNumber - 1)
+	let page = openDocument.loadPage(pageNumber - 1)
 
-	if (pdfPage == null) {
+	if (page == null) {
 		return []
 	}
 
-	const annotations = pdfPage.getAnnotations()
+	const annotations = page.getAnnotations()
 	const doc_to_screen = [ dpi = 72, 0, 0, dpi / 72, 0, 0 ]
 
 	return annotations.map((annotation) => {
@@ -242,27 +194,20 @@ workerMethods.getPageAnnotations = function (pageNumber, dpi) {
 	})
 }
 
-let currentTool = null
-let currentSelection = null
-
 // TODO - Move this to mupdf-view
 const lastPageRender = new Map()
 
-workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookiePointer) {
+workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookie) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
 	// TODO - use canvas?
 
 	let page = openDocument.loadPage(pageNumber - 1)
-	let pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false, cookiePointer)
+	let pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false, cookie)
 
-	if (mupdf.cookieAborted(cookiePointer)) {
+	if (mupdf.Cookie.isAborted(cookie)) {
 		pixmap = null
 	}
-
-	// TODO - move to frontend
-	if (pageNumber == currentTool.pageNumber)
-		currentTool.drawOnPage(pixmap, dpi)
 
 	let png = pixmap?.saveAsPNG()
 
@@ -271,886 +216,38 @@ workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookiePointer) {
 	return png
 }
 
-workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookiePointer) {
-	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
-
-	let page
-	let pixmap
-
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-		pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, true, cookiePointer)
-
-		if (mupdf.cookieAborted(cookiePointer)) {
-			return null
-		}
-
-		// TODO - move to frontend
-		if (pageNumber == currentTool.pageNumber)
-			currentTool.drawOnPage(pixmap, dpi)
-
-		let pixArray = pixmap.getPixels()
-
-		let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
-
-		return imageData
-	} finally {
-	}
-}
-
-workerMethods.drawPageContentsAsPixmap = function (pageNumber, dpi, cookiePointer) {
-	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
-
-	let page
-	let pixmap
-	let device
-
-	try {
-		page = openDocument.loadPage(pageNumber - 1)
-
-		let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
-		pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
-		pixmap.clear()
-
-		device = new mupdf.DrawDevice(doc_to_screen, pixmap)
-		page.runPageContents(device, Matrix.Identity, cookiePointer)
-		device.close()
-
-		if (mupdf.cookieAborted(cookiePointer)) {
-			return null
-		}
-
-		let pixArray = pixmap.getPixels()
-		let imageData = new ImageData(pixArray, pixmap.getWidth(), pixmap.getHeight())
-
-		pixmap.destroy()
-
-		return imageData
-	} finally {
-		page?.free()
-		device?.free()
-	}
-}
-
-workerMethods.drawPageAnnotsAsPixmap = function (pageNumber, dpi, cookiePointer) {
+workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookie) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
 	let page = openDocument.loadPage(pageNumber - 1)
-
-	let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
+	let bbox = Rect.transform(page.getBounds(), doc_to_screen)
 	let pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
-	pixmap.clear()
+	pixmap.clear(255)
 
 	let device = new mupdf.DrawDevice(doc_to_screen, pixmap)
-	page.runPageAnnots(device, Matrix.Identity, cookiePointer)
+	page.run(device, Matrix.identity, cookie)
 	device.close()
 
-	if (mupdf.cookieAborted(cookiePointer)) {
+	if (mupdf.Cookie.isAborted(cookie)) {
 		pixmap.destroy()
 		return null
 	}
 
-	let pixArray = pixmap.getPixels().slice()
-	let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
-	pixmap.destroy()
+	let pixArray = pixmap.getPixels()
+	let pixW = pixmap.getWidth()
+	let pixH = pixmap.getHeight()
 
-	return imageData
-}
+	let imageData = new ImageData(pixArray.slice(), pixW, pixH)
 
-workerMethods.drawPageWidgetsAsPixmap = function (pageNumber, dpi, cookiePointer) {
-	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
-
-	let page = openDocument.loadPage(pageNumber - 1)
-
-	let bbox = page.getBounds().transformed(Matrix.from(doc_to_screen))
-	let pixmap = new mupdf.Pixmap(mupdf.DeviceRGB, bbox, true)
-	pixmap.clear()
-
-	let device = new mupdf.DrawDevice(doc_to_screen, pixmap)
-	page.runPageWidgets(device, Matrix.Identity, cookiePointer)
-	device.close()
-
-	if (mupdf.cookieAborted(cookiePointer)) {
-		pixmap.destroy()
-		return null
-	}
-
-	let pixArray = pixmap.getPixels().slice()
-	let imageData = new ImageData(pixArray, pixmap.width(), pixmap.height())
 	pixmap.destroy()
 
 	return imageData
 }
 
 workerMethods.createCookie = function () {
-	return mupdf.createCookie()
+	return mupdf.Cookie.create()
 }
 
-workerMethods.deleteCookie = function (cookiePointer) {
-	mupdf.deleteCookie(cookiePointer)
-}
-
-workerMethods.mouseDownOnPage = function (pageNumber, dpi, x, y) {
-	// TODO - Do we want to do a load every time?
-	let pdfPage = openDocument.loadPage(pageNumber - 1)
-
-	if (pdfPage == null) {
-		return
-	}
-
-	if (pageNumber !== currentTool.pageNumber) {
-		// TODO - schedule paint
-		lastPageRender.delete(currentTool.pageNumber)
-		currentTool.resetPage(pdfPage, pageNumber)
-	}
-
-	// transform mouse pos from screen coordinates to document coordinates.
-	x = x / (dpi / 72)
-	y = y / (dpi / 72)
-
-	let pageChanged = currentTool.mouseDown(x, y)
-	if (pageChanged) {
-		lastPageRender.delete(pageNumber)
-	}
-	return pageChanged
-
-	// TODO - multi-selection
-	// TODO - differentiate between hovered, selected, held
-}
-
-// TODO - handle crossing pages
-workerMethods.mouseDragOnPage = function (pageNumber, dpi, x, y) {
-	if (pageNumber !== currentTool.pageNumber)
-		return false
-
-	// transform mouse pos from screen coordinates to document coordinates.
-	x = x / (dpi / 72)
-	y = y / (dpi / 72)
-
-	let pageChanged = currentTool.mouseDrag(x, y)
-	if (pageChanged) {
-		lastPageRender.delete(pageNumber)
-	}
-	return pageChanged
-}
-
-workerMethods.mouseMoveOnPage = function (pageNumber, dpi, x, y) {
-	if (pageNumber !== currentTool.pageNumber)
-		return false
-
-	let pdfPage = openDocument.loadPage(pageNumber - 1)
-	if (pdfPage == null) {
-		return
-	}
-
-	// transform mouse pos from screen coordinates to document coordinates.
-	x = x / (dpi / 72)
-	y = y / (dpi / 72)
-
-	let pageChanged = currentTool.mouseMove(x, y)
-	if (pageChanged) {
-		lastPageRender.delete(pageNumber)
-	}
-	return pageChanged
-}
-
-workerMethods.mouseUpOnPage = function (pageNumber, dpi, x, y) {
-	if (pageNumber !== currentTool.pageNumber)
-		return false
-
-	// transform mouse pos from screen coordinates to document coordinates.
-	x = x / (dpi / 72)
-	y = y / (dpi / 72)
-
-	let pageChanged = currentTool.mouseUp(x, y)
-	if (pageChanged) {
-		lastPageRender.delete(pageNumber)
-	}
-	return pageChanged
-}
-
-workerMethods.deleteItem = function () {
-	let pageChanged = currentTool.deleteItem()
-	if (pageChanged) {
-		lastPageRender.delete(currentTool.pageNumber)
-	}
-	return currentTool.pageNumber
-}
-
-class SelectedAnnotation {
-	constructor(annotation, mouse_x, mouse_y) {
-		// Is this necessary?
-		this.annotation = annotation
-		this.startRect = annotation.rect()
-		this.currentRect = annotation.rect()
-		this.initial_x = mouse_x
-		this.initial_y = mouse_y
-	}
-
-	// TODO - remove
-	mouseDrag(x, y) {
-		this.currentRect = this.startRect.translated(x - this.initial_x, y - this.initial_y)
-		this.annotation.rect()
-		// TODO - setRect doesn't quite do what we want
-		this.annotation.setRect(this.currentRect)
-		return true
-	}
-
-	// TODO - remove
-	mouseUp(x, y) {
-		this.currentRect = this.startRect.translated(x - this.initial_x, y - this.initial_y)
-		// TODO - setRect doesn't quite do what we want
-		this.annotation.setRect(this.currentRect)
-		return true
-	}
-}
-
-function inSquare(squarePoint, x, y) {
-	return x >= squarePoint.x - 5 && x < squarePoint.x + 5 && y >= squarePoint.y - 5 && y < squarePoint.y + 5
-}
-
-function findAnnotationAtPos(pdfPage, x, y) {
-	// using Array.findLast would be more elegant, but it isn't stable on
-	// all major platforms
-	let annotations = pdfPage.getAnnotations().annotations
-	for (let i = annotations.length - 1; i >= 0; i--) {
-		const annotation = annotations[i]
-		const bbox = annotation.bound()
-		if (x >= bbox.x0 && x <= bbox.x1 && y >= bbox.y0 && y <= bbox.y1) {
-			// TODO - remove this if
-			if (annotation.hasRect())
-				return annotation
-		}
-	}
-	return null
-}
-
-class SelectAnnot {
-	constructor() {
-		this.initial_x = null
-		this.initial_y = null
-		this.hovered = null
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		currentSelection = null
-	}
-
-	mouseDown(x, y) {
-		const clickedAnnotation = findAnnotationAtPos(this.pdfPage, x, y)
-		let selectionChanged = currentSelection?.annotation !== clickedAnnotation
-
-		if (clickedAnnotation != null) {
-			currentSelection = new SelectedAnnotation(clickedAnnotation, x, y)
-			this.initial_x = x
-			this.initial_y = y
-		} else {
-			currentSelection = null
-		}
-
-		return selectionChanged
-	}
-
-	mouseDrag(x, y) {
-		if (currentSelection == null)
-			return false
-
-		return currentSelection?.mouseDrag(x, y)
-	}
-
-	mouseMove(x, y) {
-		let prevHovered = this.hovered
-		this.hovered = findAnnotationAtPos(this.pdfPage, x, y)
-		return prevHovered?.pointer !== this.hovered?.pointer
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		if (this.hovered != null) {
-			let rect = this.hovered.bound()
-			pixmap.drawGrabHandle((rect.x0 * dpi) / 72, (rect.y0 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x0 * dpi) / 72, (rect.y1 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x1 * dpi) / 72, (rect.y0 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x1 * dpi) / 72, (rect.y1 * dpi) / 72)
-		}
-		if (currentSelection != null) {
-			let rect = currentSelection.annotation.bound()
-			pixmap.drawGrabHandle((rect.x0 * dpi) / 72, (rect.y0 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x0 * dpi) / 72, (rect.y1 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x1 * dpi) / 72, (rect.y0 * dpi) / 72)
-			pixmap.drawGrabHandle((rect.x1 * dpi) / 72, (rect.y1 * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		if (currentSelection?.annotation) {
-			this.pdfPage.deleteAnnotation(currentSelection?.annotation)
-			return true
-		}
-	}
-}
-
-// TODO - DragSelection
-// TODO - SelectionRect
-
-class CreateText {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_TEXT)
-		annot.setRect(new mupdf.Rect(x, y, x + 20, y + 20))
-		//pdf_annot_icon_name
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-// TODO - CreateLink
-
-class CreateFreeText {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_FREE_TEXT)
-		annot.setRect(new mupdf.Rect(x, y, x + 200, y + 100))
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateLine {
-	constructor() {
-		this.points = []
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		this.points = []
-	}
-
-	mouseDown(x, y) {
-		this.points.push(new mupdf.Point(x, y))
-
-		if (this.points.length == 2) {
-			let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_LINE)
-			annot.setLine(this.points[0], this.points[1])
-			// pdf_set_annot_interior_color
-			// pdf_set_annot_line_ending_styles
-			this.pdfPage.update()
-			return true
-		}
-
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateSquare {
-	constructor() {
-		this.points = []
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		this.points = []
-	}
-
-	mouseDown(x, y) {
-		this.points.push(new mupdf.Point(x, y))
-
-		if (this.points.length == 2) {
-			let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_SQUARE)
-			annot.setRect(new mupdf.Rect(this.points[0].x, this.points[0].y, this.points[1].x, this.points[1].y))
-			// pdf_set_annot_interior_color
-			this.pdfPage.update()
-			return true
-		}
-
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateCircle {
-	constructor() {
-		this.points = []
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		this.points = []
-	}
-
-	mouseDown(x, y) {
-		this.points.push(new mupdf.Point(x, y))
-
-		if (this.points.length == 2) {
-			let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_CIRCLE)
-			annot.setRect(new mupdf.Rect(this.points[0].x, this.points[0].y, this.points[1].x, this.points[1].y))
-			// pdf_set_annot_interior_color
-			this.pdfPage.update()
-			return true
-		}
-
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreatePolygon {
-	constructor() {
-		this.points = []
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		this.points = []
-	}
-
-	mouseDown(x, y) {
-		if (this.points[0] != null && inSquare(this.points[0], x, y)) {
-			let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_POLYGON)
-			for (const point of this.points) {
-				annot.addVertex(point)
-			}
-			this.pdfPage.update()
-			//pdf_annot_interior_color
-			//pdf_annot_line_ending_styles
-			return true
-		}
-
-		this.points.push(new mupdf.Point(x, y))
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreatePolyLine {
-	constructor() {
-		this.points = []
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-		this.points = []
-	}
-
-	mouseDown(x, y) {
-		if (this.points[0] != null && inSquare(this.points[0], x, y)) {
-			let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_POLYLINE)
-			for (const point of this.points) {
-				annot.addVertex(point)
-			}
-			this.pdfPage.update()
-			//pdf_annot_interior_color
-			//pdf_annot_line_ending_styles
-			return true
-		}
-
-		this.points.push(new mupdf.Point(x, y))
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateStamp {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_STAMP)
-		annot.setRect(new mupdf.Rect(x, y, x + 190, y + 50))
-		//pdf_annot_icon_name
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateCaret {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_CARET)
-		annot.setRect(new mupdf.Rect(x, y, x + 18, y + 15))
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateFileAttachment {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_FILE_ATTACHMENT)
-		annot.setRect(new mupdf.Rect(x, y, x + 20, y + 20))
-		//pdf_annot_icon_name
-		//pdf_annot_filespec
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-class CreateSound {
-	constructor() {
-		this.pdfPage = null
-		this.pageNumber = null
-	}
-
-	resetPage(pdfPage, pageNumber) {
-		this.pdfPage = pdfPage
-		this.pageNumber = pageNumber
-	}
-
-	mouseDown(x, y) {
-		let annot = this.pdfPage.createAnnotation(mupdf.PDF_ANNOT_SOUND)
-		annot.setRect(new mupdf.Rect(x, y, x + 20, y + 20))
-		//pdf_annot_icon_name
-		this.pdfPage.update()
-		return true
-	}
-
-	mouseDrag(_x, _y) {
-		// move last point
-	}
-
-	mouseMove(_pdfPage, _x, _y) {
-		// update hovered
-	}
-
-	mouseUp(_x, _y) {
-		// do nothing
-	}
-
-	drawOnPage(pixmap, dpi) {
-		// TODO - draw points on hover/select
-		let points = this.points ?? []
-		for (let point of points) {
-			pixmap.drawGrabHandle((point.x * dpi) / 72, (point.y * dpi) / 72)
-		}
-	}
-
-	deleteItem() {
-		// TODO
-	}
-}
-
-currentTool = new SelectAnnot()
-
-const editionTools = {
-	CreateText,
-	CreateFreeText,
-	CreateLine,
-	CreateSquare,
-	CreateCircle,
-	CreatePolygon,
-	CreatePolyLine,
-	CreateStamp,
-	CreateCaret,
-	CreateFileAttachment,
-	CreateSound,
-}
-
-workerMethods.setEditionTool = function (toolName) {
-	if (toolName in editionTools) {
-		currentTool = new editionTools[toolName]()
-		console.log("new tool:", toolName, " - ", currentTool)
-	} else {
-		console.warn("cannot find tool", toolName)
-	}
+workerMethods.destroyCookie = function (cookie) {
+	mupdf.Cookie.destroy(cookie)
 }

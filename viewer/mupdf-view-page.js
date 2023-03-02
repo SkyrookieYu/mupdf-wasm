@@ -243,7 +243,7 @@ class MupdfPageViewer {
 		} catch (error) {
 			this.showError("_loadPageImg", error)
 		} finally {
-			this.worker.deleteCookie(this.renderCookie)
+			this.worker.destroyCookie(this.renderCookie)
 			this.renderCookie = null
 			this.renderPromise = null
 			this.renderIsOngoing = false
@@ -295,7 +295,7 @@ class MupdfPageViewer {
 	}
 
 	_applyPageText(textResultObject, dpi) {
-		console.log("PAGE TEXT:", textResultObject)
+		console.log("PAGE TEXT:", dpi)
 		this.textNode.dpi = dpi
 		let nodes = []
 		let pdf_w = []
@@ -317,7 +317,7 @@ class MupdfPageViewer {
 					text.textContent = line.text
 					this.textNode.appendChild(text)
 					nodes.push(text)
-					pdf_w.push(line.bbox.w)
+					pdf_w.push(line.bbox.w * scale)
 					text_len.push(line.text.length - 1)
 				}
 			}
