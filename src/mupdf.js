@@ -201,35 +201,37 @@ const Rect = {
 	},
 }
 
-const finalizer = new FinalizationRegistry(f => f())
-
-class Wrapper {
-	constructor(pointer, dropFunction) {
-		this.pointer = pointer
-		this.dropFunction = dropFunction
-
-		if (typeof pointer !== "number" || pointer === 0)
+class Userdata {
+	constructor(pointer) {
+		if (typeof pointer !== "number")
 			throw new Error("invalid pointer: " + typeof pointer)
-		if (typeof dropFunction !== "function")
-			throw new Error("invalid dropFunction")
 		if (pointer === 0)
 			throw new Error("invalid pointer: null")
 
-		finalizer.register(this, () => dropFunction(pointer), this)
-	}
+		if (!this.constructor._finalizer) {
+			this.constructor._drop = libmupdf[this.constructor._drop]
+			this.constructor._finalizer = new FinalizationRegistry(this.constructor._drop)
+		}
 
+		this.constructor._finalizer.register(this, pointer, this)
+		this.pointer = pointer
+	}
 	destroy() {
-		finalizer.unregister(this)
-		this.dropFunction(this.pointer)
+		this.constructor._finalizer.unregister(this)
+		this.constructor._drop(this.pointer)
 		this.pointer = 0
 	}
-
 	toString() {
+		return `[${this.constructor.name} ${this.pointer}]`
+	}
+	valueOf() {
 		return `[${this.constructor.name} ${this.pointer}]`
 	}
 }
 
-class Buffer extends Wrapper {
+class Buffer extends Userdata {
+	static _drop = "_wasm_drop_buffer"
+
 	constructor(arg) {
 		let pointer = 0
 		if (typeof arg === "undefined") {
@@ -247,7 +249,7 @@ class Buffer extends Wrapper {
 			libmupdf.HEAPU8.set(new Uint8Array(arg), data_ptr)
 			pointer = libmupdf._wasm_new_buffer_from_data(data_ptr, data_len)
 		}
-		super(pointer, libmupdf._wasm_drop_buffer)
+		super(pointer)
 	}
 
 	getLength() {
@@ -296,15 +298,17 @@ class Buffer extends Wrapper {
 	}
 }
 
-class ColorSpace extends Wrapper {
+class ColorSpace extends Userdata {
+	static _drop = "_wasm_drop_colorspace"
 	constructor(name, pointer) {
 		// TODO: ICC profile
-		super(pointer, libmupdf._wasm_drop_colorspace)
+		super(pointer)
 		this.name = name
 	}
 }
 
-class Font extends Wrapper {
+class Font extends Userdata {
+	static _drop = "_wasm_drop_font"
 	constructor(arg1) {
 		let pointer = 0
 		if (typeof arg1 === "number") {
@@ -320,7 +324,7 @@ class Font extends Wrapper {
 		else if (arg1 instanceof Buffer) {
 			pointer = libmupdf._wasm_new_font_from_buffer(arg1.pointer, arg2 | 0)
 		}
-		super(pointer, libmupdf._wasm_drop_font)
+		super(pointer)
 	}
 
 	encodeCharacter(uni) {
@@ -334,7 +338,8 @@ class Font extends Wrapper {
 	}
 }
 
-class Image extends Wrapper {
+class Image extends Userdata {
+	static _drop = "_wasm_drop_image"
 	constructor(arg1) {
 		let pointer = 0
 		if (typeof arg1 === "number")
@@ -343,15 +348,16 @@ class Image extends Wrapper {
 			pointer = libmupdf._wasm_new_from_pixmap(arg1.pointer)
 		else if (arg1 instanceof Buffer)
 			pointer = libmupdf._wasm_new_image_from_buffer(arg1.pointer)
-		super(pointer, libmupdf._wasm_drop_image)
+		super(pointer)
 	}
 
 	// TODO: toPixmap
 }
 
-class Path extends Wrapper {
+class Path extends Userdata {
+	static _drop = "_wasm_drop_path"
 	constructor() {
-		super(libmupdf._wasm_new_path(), libmupdf._wasm_drop_path)
+		super(libmupdf._wasm_new_path())
 	}
 	getBounds() {
 		return rect_from_wasm(libmupdf._wasm_bound_path(this.pointer))
@@ -390,9 +396,10 @@ class Path extends Wrapper {
 	}
 }
 
-class Text extends Wrapper {
+class Text extends Userdata {
+	static _drop = "_wasm_drop_text"
 	constructor() {
-		super(libmupdf._wasm_new_text(), libmupdf._wasm_drop_text)
+		super(libmupdf._wasm_new_text())
 	}
 	getBounds() {
 		return rect_from_wasm(libmupdf._wasm_bound_text(this.pointer))
@@ -440,7 +447,8 @@ class Text extends Wrapper {
 	}
 }
 
-class DisplayList extends Wrapper {
+class DisplayList extends Userdata {
+	static _drop = "_wasm_drop_display_list"
 	constructor(arg1) {
 		if (typeof arg1 === "number") {
 			pointer = arg1
@@ -448,7 +456,7 @@ class DisplayList extends Wrapper {
 			let mediabox = arg1
 			pointer = libmupdf._wasm_new_display_list(mediabox[0], mediabox[1], mediabox[1], mediabox[2])
 		}
-		super(pointer, libmupdf._wasm_drop_display_list)
+		super(pointer)
 	}
 
 	getBounds() {
@@ -461,14 +469,15 @@ class DisplayList extends Wrapper {
 	// TODO: search
 }
 
-class Pixmap extends Wrapper {
+class Pixmap extends Userdata {
+	static _drop = "_wasm_drop_pixmap"
 	constructor(arg1, bbox = null, alpha = false) {
 		let pointer = arg1
 		if (arg1 instanceof ColorSpace) {
 			checkRect(bbox)
 			pointer = libmupdf._wasm_new_pixmap_with_bbox(arg1.pointer, bbox[0], bbox[1], bbox[2], bbox[3], 0, alpha)
 		}
-		super(pointer, libmupdf._wasm_drop_pixmap)
+		super(pointer)
 	}
 
 	clear(value) {
@@ -509,7 +518,7 @@ class Pixmap extends Wrapper {
 		return new Uint8ClampedArray(libmupdf.HEAPU8.buffer, p, s * h)
 	}
 
-	saveAsPNG() {
+	asPNG() {
 		let buf = libmupdf._wasm_new_buffer_from_pixmap_as_png(this.pointer)
 		try {
 			let data = libmupdf._wasm_buffer_data(buf)
@@ -521,10 +530,8 @@ class Pixmap extends Wrapper {
 	}
 }
 
-class StructuredText extends Wrapper {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_drop_stext_page)
-	}
+class StructuredText extends Userdata {
+	static _drop = "_wasm_drop_stext_page"
 
 	static SELECT_CHARS = 0
 	static SELECT_WORDS = 1
@@ -558,9 +565,8 @@ class StructuredText extends Wrapper {
 					if (walker.onChar) {
 						let ch = libmupdf._wasm_stext_char(line)
 						while (ch) {
-							let ch_rune = libmupdf._wasm_stext_char_rune(ch)
+							let ch_rune = String.fromCharCode(libmupdf._wasm_stext_char_rune(ch))
 							let ch_origin = point_from_wasm(libmupdf._wasm_stext_char_origin(ch))
-							// TODO: refcount
 							let ch_font = new Font(libmupdf._wasm_stext_char_font(ch))
 							let ch_size = libmupdf._wasm_stext_char_size(ch)
 							let ch_quad = quad_from_wasm(libmupdf._wasm_stext_char_quad(ch))
@@ -599,11 +605,8 @@ class StructuredText extends Wrapper {
 }
 
 
-class Device extends Wrapper {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_drop_device)
-	}
-
+class Device extends Userdata {
+	static _drop = "_wasm_drop_device"
 	close() {
 		libmupdf._wasm_close_device(this.pointer)
 	}
@@ -613,7 +616,7 @@ class DrawDevice extends Device {
 	constructor(matrix, pixmap) {
 		checkMatrix(matrix)
 		checkType(pixmap, Pixmap)
-		return new Device(
+		super(
 			libmupdf._wasm_new_draw_device(
 				matrix[0], matrix[1],
 				matrix[2], matrix[3],
@@ -627,7 +630,7 @@ class DrawDevice extends Device {
 class DisplayListDevice extends Device {
 	constructor(displayList) {
 		checkType(displayList, DisplayList)
-		return new Device(
+		super(
 			libmupdf._wasm_new_list_device(displayList.pointer)
 		)
 	}
@@ -635,10 +638,8 @@ class DisplayListDevice extends Device {
 
 // === Document ===
 
-class Document extends Wrapper {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_drop_document)
-	}
+class Document extends Userdata {
+	static _drop = "_wasm_drop_document"
 
 	static META_FORMAT = "format"
 	static META_ENCRYPTION = "encryption";
@@ -817,15 +818,18 @@ class Document extends Wrapper {
 }
 
 class PDFDocument extends Document {
+	constructor(pointer) {
+		if (!pointer)
+			pointer = libmupdf._wasm_pdf_create_document()
+		super(pointer)
+	}
 	isPDF() {
 		return true
 	}
 }
 
-class Page extends Wrapper {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_drop_page)
-	}
+class Page extends Userdata {
+	static _drop = "_wasm_drop_page"
 
 	isPDF() {
 		return false
@@ -1026,10 +1030,8 @@ class PDFPage extends Page {
 	}
 }
 
-class Link extends Wrapper {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_drop_link)
-	}
+class Link extends Userdata {
+	static _drop = "_wasm_drop_link"
 
 	getBounds() {
 		return rect_from_wasm(libmupdf._wasm_link_rect(this.pointer))
@@ -1057,7 +1059,9 @@ class Link extends Wrapper {
 	}
 }
 
-class PDFAnnotation extends Wrapper {
+class PDFAnnotation extends Userdata {
+	static _drop = "_wasm_pdf_drop_annot"
+
 	constructor(pointer) {
 		super(pointer, libmupdf._wasm_pdf_drop_annot)
 	}
@@ -1479,12 +1483,14 @@ class TryLaterError extends Error {
 	}
 }
 
-class Stream extends Wrapper {
+class Stream extends Userdata {
+	static _drop = "_wasm_drop_stream"
+
 	constructor(url, contentLength, block_size, prefetch) {
 		let url_ptr = allocateUTF8(url)
 		try {
 			let pointer = libmupdf._wasm_open_stream_from_url(url_ptr, contentLength, block_size, prefetch)
-			super(pointer, libmupdf._wasm_drop_stream)
+			super(pointer)
 		} finally {
 			libmupdf._wasm_free(url_ptr)
 		}
@@ -1621,10 +1627,10 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	libmupdf = m
 	libmupdf._wasm_init_context()
 
-	mupdf.DeviceGray = new ColorSpace("DeviceGray", libmupdf._wasm_device_gray())
-	mupdf.DeviceRGB = new ColorSpace("DeviceRGB", libmupdf._wasm_device_rgb())
-	mupdf.DeviceBGR = new ColorSpace("DeviceBGR", libmupdf._wasm_device_bgr())
-	mupdf.DeviceCMYK = new ColorSpace("DeviceCMYK", libmupdf._wasm_device_cmyk())
+	ColorSpace.DeviceGray = new ColorSpace("DeviceGray", libmupdf._wasm_device_gray())
+	ColorSpace.DeviceRGB = new ColorSpace("DeviceRGB", libmupdf._wasm_device_rgb())
+	ColorSpace.DeviceBGR = new ColorSpace("DeviceBGR", libmupdf._wasm_device_bgr())
+	ColorSpace.DeviceCMYK = new ColorSpace("DeviceCMYK", libmupdf._wasm_device_cmyk())
 })
 
 // If running in Node.js environment
