@@ -25,14 +25,8 @@
 "use strict"
 
 // Import the WASM module
-if (globalThis.SharedArrayBuffer != null) {
-	globalThis.__filename = "../dist/mupdf-wasm-mt.js"
-	importScripts("../dist/mupdf-wasm-mt.js")
-} else {
-	globalThis.__filename = "../dist/mupdf-wasm.js"
-	importScripts("../dist/mupdf-wasm.js")
-}
-
+globalThis.__filename = "../dist/mupdf-wasm.js"
+importScripts("../dist/mupdf-wasm.js")
 importScripts("../src/mupdf.js")
 
 mupdf.ready
@@ -197,17 +191,13 @@ workerMethods.getPageAnnotations = function (pageNumber, dpi) {
 // TODO - Move this to mupdf-view
 const lastPageRender = new Map()
 
-workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookie) {
+workerMethods.drawPageAsPNG = function (pageNumber, dpi) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
 	// TODO - use canvas?
 
 	let page = openDocument.loadPage(pageNumber - 1)
-	let pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false, cookie)
-
-	if (mupdf.Cookie.isAborted(cookie)) {
-		pixmap = null
-	}
+	let pixmap = page.toPixmap(doc_to_screen, mupdf.DeviceRGB, false)
 
 	let png = pixmap?.saveAsPNG()
 
@@ -216,7 +206,7 @@ workerMethods.drawPageAsPNG = function (pageNumber, dpi, cookie) {
 	return png
 }
 
-workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookie) {
+workerMethods.drawPageAsPixmap = function (pageNumber, dpi) {
 	const doc_to_screen = mupdf.Matrix.scale(dpi / 72, dpi / 72)
 
 	let page = openDocument.loadPage(pageNumber - 1)
@@ -225,13 +215,8 @@ workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookie) {
 	pixmap.clear(255)
 
 	let device = new mupdf.DrawDevice(doc_to_screen, pixmap)
-	page.run(device, Matrix.identity, cookie)
+	page.run(device, Matrix.identity)
 	device.close()
-
-	if (mupdf.Cookie.isAborted(cookie)) {
-		pixmap.destroy()
-		return null
-	}
 
 	let pixArray = pixmap.getPixels()
 	let pixW = pixmap.getWidth()
@@ -242,12 +227,4 @@ workerMethods.drawPageAsPixmap = function (pageNumber, dpi, cookie) {
 	pixmap.destroy()
 
 	return imageData
-}
-
-workerMethods.createCookie = function () {
-	return mupdf.Cookie.create()
-}
-
-workerMethods.destroyCookie = function (cookie) {
-	mupdf.Cookie.destroy(cookie)
 }

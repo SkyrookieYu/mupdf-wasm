@@ -25,12 +25,8 @@
 var libmupdf
 
 // If running in Node.js environment
-if (typeof require === "function") {
-	if (typeof SharedArrayBuffer === "undefined")
-		libmupdf = require("../dist/mupdf-wasm-mt.js")
-	else
-		libmupdf = require("../dist/mupdf-wasm.js")
-}
+if (typeof require === "function")
+	libmupdf = require("../dist/mupdf-wasm.js")
 
 function checkType(value, type) {
 	if (typeof type === "string" && typeof value !== type)
@@ -839,48 +835,44 @@ class Page extends Wrapper {
 		return rect_from_wasm(libmupdf._wasm_bound_page(this.pointer))
 	}
 
-	run(device, matrix, cookie = 0) {
+	run(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
 		libmupdf._wasm_run_page(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
-			matrix[4], matrix[5],
-			cookie)
+			matrix[4], matrix[5])
 	}
 
-	runPageContents(device, matrix, cookie = 0) {
+	runPageContents(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
 		libmupdf._wasm_run_page_contents(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
-			matrix[4], matrix[5],
-			cookie)
+			matrix[4], matrix[5])
 	}
 
-	runPageAnnots(device, matrix, cookie = 0) {
+	runPageAnnots(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
 		libmupdf._wasm_run_page_annots(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
-			matrix[4], matrix[5],
-			cookie)
+			matrix[4], matrix[5])
 	}
 
-	runPageWidgets(device, matrix, cookie = 0) {
+	runPageWidgets(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
 		libmupdf._wasm_run_page_widgets(this.pointer,
 			device.pointer,
 			matrix[0], matrix[1],
 			matrix[2], matrix[3],
-			matrix[4], matrix[5],
-			cookie)
+			matrix[4], matrix[5])
 	}
 
 	toPixmap(matrix, colorspace, alpha = false, showExtras = true) {
@@ -1478,65 +1470,24 @@ class PDFWidget extends PDFAnnotation {
 	// TODO
 }
 
-
-class Stream extends Wrapper {
-	constructor(pointer, internalBuffer = null) {
-		super(pointer, libmupdf._wasm_drop_stream)
-		// We keep a reference so the internal buffer isn't dropped before the stream is.
-		this.internalBuffer = internalBuffer
-	}
-
-	static fromUrl(url, contentLength, block_size, prefetch) {
-		let url_ptr = allocateUTF8(url)
-		try {
-			let pointer = libmupdf._wasm_open_stream_from_url(url_ptr, contentLength, block_size, prefetch)
-			return new Stream(pointer)
-		} finally {
-			libmupdf._wasm_free(url_ptr)
-		}
-	}
-
-	// This takes a reference to the buffer, not a clone.
-	// Modifying the buffer after calling this function will change the returned stream's output.
-	static fromBuffer(buffer) {
-		checkType(buffer, Buffer)
-		return new Stream(libmupdf._wasm_new_stream_from_buffer(buffer.pointer), buffer)
-	}
-
-	static fromJsBuffer(buffer) {
-		return Stream.fromBuffer(Buffer.fromJsBuffer(buffer))
-	}
-
-	static fromJsString(string) {
-		return Stream.fromBuffer(Buffer.fromJsString(string))
-	}
-
-	readAll(suggestedCapacity = 0) {
-		return new Buffer(libmupdf._wasm_read_all(this.pointer, suggestedCapacity))
-	}
-}
-
-
-
-
 // Background progressive fetch
-
-const Cookie = {
-	create() {
-		return libmupdf._wasm_new_cookie()
-	},
-	destroy(cookie) {
-		libmupdf._wasm_free_cookie(cookie)
-	},
-	isAborted(cookie) {
-		return cookie && libmupdf._wasm_cookie_aborted(cookie)
-	},
-}
 
 class TryLaterError extends Error {
 	constructor(message) {
 		super(message)
 		this.name = "TryLaterError"
+	}
+}
+
+class Stream extends Wrapper {
+	constructor(url, contentLength, block_size, prefetch) {
+		let url_ptr = allocateUTF8(url)
+		try {
+			let pointer = libmupdf._wasm_open_stream_from_url(url_ptr, contentLength, block_size, prefetch)
+			super(pointer, libmupdf._wasm_drop_stream)
+		} finally {
+			libmupdf._wasm_free(url_ptr)
+		}
 	}
 }
 
@@ -1649,8 +1600,8 @@ const mupdf = {
 	DisplayListDevice,
 	Document,
 	PDFDocument,
-	Cookie,
 	TryLaterError,
+	Stream,
 	onFetchCompleted: () => {},
 }
 
@@ -1674,16 +1625,6 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	mupdf.DeviceRGB = new ColorSpace("DeviceRGB", libmupdf._wasm_device_rgb())
 	mupdf.DeviceBGR = new ColorSpace("DeviceBGR", libmupdf._wasm_device_bgr())
 	mupdf.DeviceCMYK = new ColorSpace("DeviceCMYK", libmupdf._wasm_device_cmyk())
-
-	if (!globalThis.crossOriginIsolated)
-		return null
-	if (globalThis.SharedArrayBuffer == null)
-		return null
-	if (libmupdf.wasmMemory == null)
-		return null
-	if ((libmupdf.wasmMemory instanceof WebAssembly.Memory) && (libmupdf.wasmMemory.buffer instanceof SharedArrayBuffer))
-		return libmupdf.wasmMemory.buffer
-	return null
 })
 
 // If running in Node.js environment

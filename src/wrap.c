@@ -237,12 +237,11 @@ EMSCRIPTEN_KEEPALIVE
 void wasm_run_page(
 	fz_page *page,
 	fz_device *dev,
-	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5,
-	fz_cookie *cookie
+	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5
 ) {
 	fz_matrix ctm = fz_make_matrix(ctm_0, ctm_1, ctm_2, ctm_3, ctm_4, ctm_5);
 	fz_try(ctx)
-		fz_run_page(ctx, page, dev, ctm, cookie);
+		fz_run_page(ctx, page, dev, ctm, NULL);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 }
@@ -251,12 +250,11 @@ EMSCRIPTEN_KEEPALIVE
 void wasm_run_page_contents(
 	fz_page *page,
 	fz_device *dev,
-	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5,
-	fz_cookie *cookie
+	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5
 ) {
 	fz_matrix ctm = fz_make_matrix(ctm_0, ctm_1, ctm_2, ctm_3, ctm_4, ctm_5);
 	fz_try(ctx)
-		fz_run_page_contents(ctx, page, dev, ctm, cookie);
+		fz_run_page_contents(ctx, page, dev, ctm, NULL);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 }
@@ -265,12 +263,11 @@ EMSCRIPTEN_KEEPALIVE
 void wasm_run_page_annots(
 	fz_page *page,
 	fz_device *dev,
-	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5,
-	fz_cookie *cookie
+	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5
 ) {
 	fz_matrix ctm = fz_make_matrix(ctm_0, ctm_1, ctm_2, ctm_3, ctm_4, ctm_5);
 	fz_try(ctx)
-		fz_run_page_annots(ctx, page, dev, ctm, cookie);
+		fz_run_page_annots(ctx, page, dev, ctm, NULL);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 }
@@ -279,12 +276,11 @@ EMSCRIPTEN_KEEPALIVE
 void wasm_run_page_widgets(
 	fz_page *page,
 	fz_device *dev,
-	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5,
-	fz_cookie *cookie
+	float ctm_0, float ctm_1, float ctm_2, float ctm_3, float ctm_4, float ctm_5
 ) {
 	fz_matrix ctm = fz_make_matrix(ctm_0, ctm_1, ctm_2, ctm_3, ctm_4, ctm_5);
 	fz_try(ctx)
-		fz_run_page_widgets(ctx, page, dev, ctm, cookie);
+		fz_run_page_widgets(ctx, page, dev, ctm, NULL);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
 }
@@ -319,26 +315,6 @@ void wasm_drop_device(fz_device *dev)
 		fz_drop_device(ctx, dev);
 	fz_catch(ctx)
 		wasm_rethrow(ctx);
-}
-
-EMSCRIPTEN_KEEPALIVE
-fz_cookie *wasm_new_cookie() {
-	fz_cookie *cookie;
-	fz_try(ctx)
-		cookie = fz_malloc_struct(ctx, fz_cookie);
-	fz_catch(ctx)
-		wasm_rethrow(ctx);
-	return cookie;
-}
-
-EMSCRIPTEN_KEEPALIVE
-void wasm_free_cookie(fz_cookie *cookie) {
-	fz_free(ctx, cookie);
-}
-
-EMSCRIPTEN_KEEPALIVE
-int wasm_cookie_aborted(fz_cookie *cookie) {
-	return cookie->abort;
 }
 
 EMSCRIPTEN_KEEPALIVE

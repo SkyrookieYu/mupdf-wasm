@@ -50,7 +50,6 @@ class MupdfPageViewer {
 
 		this.renderPromise = null
 		this.queuedRenderArgs = null
-		this.renderCookie = null
 
 		this.textNode = null
 		this.textPromise = null
@@ -76,15 +75,6 @@ class MupdfPageViewer {
 		this._loadPageSearch(dpi, searchNeedle)
 	}
 
-	cancelRender() {
-		// TODO - use promise cancelling
-		if (this.renderCookie != null) {
-			const int32pointer = this.renderCookie >> 2
-			const wasmMemoryView32 = new Int32Array(this.worker.wasmMemory)
-			wasmMemoryView32[int32pointer] = 1
-		}
-	}
-
 	// TODO - update child nodes
 	setZoom(zoomLevel) {
 		const dpi = ((zoomLevel * 96) / 100) | 0
@@ -97,8 +87,6 @@ class MupdfPageViewer {
 	}
 
 	clear() {
-		this.cancelRender()
-
 		this.textNode?.remove()
 		this.linksNode?.remove()
 		this.searchHitsNode?.remove()
@@ -111,7 +99,6 @@ class MupdfPageViewer {
 
 		this.renderPromise = null
 		this.queuedRenderArgs = null
-		this.renderCookie = 0
 
 		this.textNode = null
 		this.textPromise = null
@@ -228,9 +215,8 @@ class MupdfPageViewer {
 				this.sizeIsDefault = false
 				this._updateSize(dpi)
 			}
-			this.renderCookie = await this.worker.createCookie()
 			// TODO - remove "+ 1"
-			this.renderPromise = this.worker.drawPageAsPixmap(this.pageNumber + 1, dpi * devicePixelRatio, this.renderCookie)
+			this.renderPromise = this.worker.drawPageAsPixmap(this.pageNumber + 1, dpi * devicePixelRatio)
 			let imageData = await this.renderPromise
 
 			// if render was aborted, return early
@@ -244,8 +230,6 @@ class MupdfPageViewer {
 		} catch (error) {
 			this.showError("_loadPageImg", error)
 		} finally {
-			this.worker.destroyCookie(this.renderCookie)
-			this.renderCookie = null
 			this.renderPromise = null
 			this.renderIsOngoing = false
 		}
