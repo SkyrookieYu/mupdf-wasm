@@ -555,9 +555,9 @@ class MupdfDocumentHandler {
 
 		const searchFlex = document.createElement("div")
 		searchFlex.classList = [ "flex" ]
-		searchFlex.append(searchDivInput, ltButton, gtButton, hideButton, searchStatusDiv)
+		searchFlex.append(searchDivInput, ltButton, gtButton, hideButton)
 
-		handler.searchDialogDiv.appendChild(searchFlex)
+		handler.searchDialogDiv.append(searchFlex, searchStatusDiv)
 
 		handler.searchStatusDiv = searchStatusDiv
 		handler.searchDivInput = searchDivInput
@@ -658,7 +658,7 @@ class MupdfDocumentHandler {
 
 	showSearchBox() {
 		// TODO - Fix what happens when you re-open search with existing text
-		this.searchDialogDiv.style.display = "flex"
+		this.searchDialogDiv.style.display = "block"
 		this.searchDivInput.focus()
 		this.searchDivInput.select()
 		this.setSearch(this.searchDivInput.value ?? "")
