@@ -52,6 +52,37 @@ function allocateUTF8(str) {
 	return pointer
 }
 
+let in_rect = 0
+let in_matrix = 0
+let in_string = 0
+
+function STRING(s) {
+	if (in_string) {
+		libmupdf._wasm_free(in_string)
+		in_string = 0
+	}
+	in_string = allocateUTF8(s)
+	return in_string
+}
+
+function RECT(r) {
+	libmupdf.HEAPF32[in_rect + 0] = r[0]
+	libmupdf.HEAPF32[in_rect + 1] = r[1]
+	libmupdf.HEAPF32[in_rect + 2] = r[2]
+	libmupdf.HEAPF32[in_rect + 3] = r[3]
+	return in_rect << 2
+}
+
+function MATRIX(m) {
+	libmupdf.HEAPF32[in_matrix + 0] = m[0]
+	libmupdf.HEAPF32[in_matrix + 1] = m[1]
+	libmupdf.HEAPF32[in_matrix + 2] = m[2]
+	libmupdf.HEAPF32[in_matrix + 3] = m[3]
+	libmupdf.HEAPF32[in_matrix + 4] = m[4]
+	libmupdf.HEAPF32[in_matrix + 5] = m[5]
+	return in_matrix << 2
+}
+
 function point_from_wasm(ptr) {
 	ptr = ptr >> 2
 	return [
@@ -224,9 +255,6 @@ class Userdata {
 	toString() {
 		return `[${this.constructor.name} ${this.pointer}]`
 	}
-	valueOf() {
-		return `[${this.constructor.name} ${this.pointer}]`
-	}
 }
 
 class Buffer extends Userdata {
@@ -262,12 +290,7 @@ class Buffer extends Userdata {
 	}
 
 	write(s) {
-		s = allocateUTF8(s)
-		try {
-			libmupdf._wasm_append_string(this.pointer, s)
-		} finally {
-			libmupdf._wasm_free(s)
-		}
+		libmupdf._wasm_append_string(this.pointer, STRING(s))
 	}
 
 	writeByte(b) {
@@ -293,33 +316,33 @@ class Buffer extends Userdata {
 
 	asString() {
 		let data = libmupdf._wasm_buffer_data(this.pointer)
-		let size = libmupdf._wasm_buffer_size(this.pointer)
-		return libmupdf.UTF8ToString(data, size)
+		return libmupdf.UTF8ToString(data)
 	}
 }
 
 class ColorSpace extends Userdata {
 	static _drop = "_wasm_drop_colorspace"
-	constructor(name, pointer) {
+	constructor(pointer) {
 		// TODO: ICC profile
 		super(pointer)
-		this.name = name
+	}
+	getName() {
+		return libmupdf.UTF8ToString(libmupdf._wasm_colorspace_get_name(this.pointer))
+	}
+	toString() {
+		return "[ColorSpace " + this.getName() + "]"
 	}
 }
 
 class Font extends Userdata {
 	static _drop = "_wasm_drop_font"
+
 	constructor(arg1) {
 		let pointer = 0
 		if (typeof arg1 === "number") {
 			pointer = libmupdf._wasm_keep_font(arg1)
 		} else if (typeof arg1 === "string") {
-			let name = allocateUTF8(arg1)
-			try {
-				pointer = libmupdf._wasm_new_base14_font(name)
-			} finally {
-				libmupdf._wasm_free(name)
-			}
+			pointer = libmupdf._wasm_new_base14_font(STRING(name))
 		}
 		else if (arg1 instanceof Buffer) {
 			pointer = libmupdf._wasm_new_font_from_buffer(arg1.pointer, arg2 | 0)
@@ -340,6 +363,7 @@ class Font extends Userdata {
 
 class Image extends Userdata {
 	static _drop = "_wasm_drop_image"
+
 	constructor(arg1) {
 		let pointer = 0
 		if (typeof arg1 === "number")
@@ -385,11 +409,7 @@ class Path extends Userdata {
 	}
 	transform(matrix) {
 		checkMatrix(matrix)
-		libmupdf._wasm_transform_path(this.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5]
-		)
+		libmupdf._wasm_transform_path(this.pointer, MATRIX(matrix))
 	}
 	walk(walker) {
 		// TODO
@@ -412,9 +432,7 @@ class Text extends Userdata {
 		libmupdf._wasm_show_glyph(
 			this.pointer,
 			font.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5],
+			MATRIX(matrix),
 			gid,
 			uni,
 			wmode
@@ -424,23 +442,16 @@ class Text extends Userdata {
 		checkType(font, Font)
 		checkMatrix(trm)
 		checkType(str, "string")
-		str = allocateUTF8(str)
-		try {
-			out_trm = libmupdf._wasm_show_string(
-				this.pointer,
-				font.pointer,
-				matrix[0], matrix[1],
-				matrix[2], matrix[3],
-				matrix[4], matrix[5],
-				str,
-				wmode
-			)
-			out_trm = out_trm >> 2
-			matrix[4] = libmupdf.HEAPF32[out_trm + 4]
-			matrix[5] = libmupdf.HEAPF32[out_trm + 5]
-		} finally {
-			libmupdf._wasm_free(str)
-		}
+		out_trm = libmupdf._wasm_show_string(
+			this.pointer,
+			font.pointer,
+			MATRIX(matrix),
+			STRING(str),
+			wmode
+		)
+		out_trm = out_trm >> 2
+		matrix[4] = libmupdf.HEAPF32[out_trm + 4]
+		matrix[5] = libmupdf.HEAPF32[out_trm + 5]
 	}
 	walk(walker) {
 		// TODO
@@ -475,7 +486,7 @@ class Pixmap extends Userdata {
 		let pointer = arg1
 		if (arg1 instanceof ColorSpace) {
 			checkRect(bbox)
-			pointer = libmupdf._wasm_new_pixmap_with_bbox(arg1.pointer, bbox[0], bbox[1], bbox[2], bbox[3], 0, alpha)
+			pointer = libmupdf._wasm_new_pixmap_with_bbox(arg1.pointer, RECT(bbox), alpha)
 		}
 		super(pointer)
 	}
@@ -538,56 +549,55 @@ class StructuredText extends Userdata {
 	static SELECT_LINES = 2
 
 	walk(walker) {
-		let block = libmupdf._wasm_stext_block(this.pointer)
+		let block = libmupdf._wasm_stext_page_get_first_block(this.pointer)
 		while (block) {
-			let block_type = libmupdf._wasm_stext_block_type(block)
-			let block_bbox = rect_from_wasm(libmupdf._wasm_stext_block_bbox(block))
+			let block_type = libmupdf._wasm_stext_block_get_type(block)
+			let block_bbox = rect_from_wasm(libmupdf._wasm_stext_block_get_bbox(block))
 
 			if (block_type === 1) {
 				if (typeof walker.onImageBlock) {
-					let matrix = matrix_from_wasm(libmupdf._wasm_stext_block_transform(block))
-					// TODO: refcount
-					let image = new Image(libmupdf._wasm_stext_block_image(block))
+					let matrix = matrix_from_wasm(libmupdf._wasm_stext_block_get_transform(block))
+					let image = new Image(libmupdf._wasm_stext_block_get_image(block))
 					walker.onImageBlock(block_bbox, matrix, image)
 				}
 			} else {
 				if (walker.beginTextBlock)
 					walker.beginTextBlock(block_bbox)
 
-				let line = libmupdf._wasm_stext_line(block)
+				let line = libmupdf._wasm_stext_block_get_first_line(block)
 				while (line) {
-					let line_bbox = rect_from_wasm(libmupdf._wasm_stext_line_bbox(line))
-					let line_wmode = libmupdf._wasm_stext_line_wmode(line)
+					let line_bbox = rect_from_wasm(libmupdf._wasm_stext_line_get_bbox(line))
+					let line_wmode = libmupdf._wasm_stext_line_get_wmode(line)
 
 					if (walker.beginLine)
 						walker.beginLine(line_bbox, line_wmode)
 
 					if (walker.onChar) {
-						let ch = libmupdf._wasm_stext_char(line)
+						let ch = libmupdf._wasm_stext_line_get_first_char(line)
 						while (ch) {
-							let ch_rune = String.fromCharCode(libmupdf._wasm_stext_char_rune(ch))
-							let ch_origin = point_from_wasm(libmupdf._wasm_stext_char_origin(ch))
-							let ch_font = new Font(libmupdf._wasm_stext_char_font(ch))
-							let ch_size = libmupdf._wasm_stext_char_size(ch)
-							let ch_quad = quad_from_wasm(libmupdf._wasm_stext_char_quad(ch))
+							let ch_rune = String.fromCharCode(libmupdf._wasm_stext_char_get_c(ch))
+							let ch_origin = point_from_wasm(libmupdf._wasm_stext_char_get_origin(ch))
+							let ch_font = new Font(libmupdf._wasm_stext_char_get_font(ch))
+							let ch_size = libmupdf._wasm_stext_char_get_size(ch)
+							let ch_quad = quad_from_wasm(libmupdf._wasm_stext_char_get_quad(ch))
 
 							walker.onChar(ch_rune, ch_origin, ch_font, ch_size, ch_quad)
 
-							ch = libmupdf._wasm_stext_char_next(ch)
+							ch = libmupdf._wasm_stext_char_get_next(ch)
 						}
 					}
 
 					if (walker.endLine)
 						walker.endLine()
 
-					line = libmupdf._wasm_stext_line_next(line)
+					line = libmupdf._wasm_stext_line_get_next(line)
 				}
 
 				if (walker.endTextBlock)
 					walker.endTextBlock()
 			}
 
-			block = libmupdf._wasm_stext_block_next(block)
+			block = libmupdf._wasm_stext_block_get_next(block)
 		}
 	}
 
@@ -616,14 +626,7 @@ class DrawDevice extends Device {
 	constructor(matrix, pixmap) {
 		checkMatrix(matrix)
 		checkType(pixmap, Pixmap)
-		super(
-			libmupdf._wasm_new_draw_device(
-				matrix[0], matrix[1],
-				matrix[2], matrix[3],
-				matrix[4], matrix[5],
-				pixmap.pointer
-			)
-		)
+		super(libmupdf._wasm_new_draw_device(MATRIX(matrix), pixmap.pointer))
 	}
 }
 
@@ -660,19 +663,14 @@ class Document extends Userdata {
 	static openDocument(from, magic) {
 		let pointer = 0
 
-		magic = allocateUTF8(magic)
-		try {
-			if (from instanceof ArrayBuffer || from instanceof Uint8Array)
-				from = new Buffer(from)
-			if (from instanceof Buffer)
-				pointer = libmupdf._wasm_open_document_with_buffer(from.pointer, magic)
-			else if (from instanceof Stream)
-				pointer = libmupdf._wasm_open_document_with_stream(from.pointer, magic)
-			else
-				throw new Error("not a Buffer or Stream")
-		} finally {
-			libmupdf._wasm_free(magic)
-		}
+		if (from instanceof ArrayBuffer || from instanceof Uint8Array)
+			from = new Buffer(from)
+		if (from instanceof Buffer)
+			pointer = libmupdf._wasm_open_document_with_buffer(STRING(magic), from.pointer)
+		else if (from instanceof Stream)
+			pointer = libmupdf._wasm_open_document_with_stream(STRING(magic), from.pointer)
+		else
+			throw new Error("not a Buffer or Stream")
 
 		let pdf_ptr = libmupdf._wasm_pdf_document_from_fz_document(pointer)
 		if (pdf_ptr)
@@ -689,12 +687,7 @@ class Document extends Userdata {
 	}
 
 	authenticatePassword(password) {
-		password = allocateUTF8(password)
-		try {
-			return libmupdf._wasm_authenticate_password(this.pointer, password)
-		} finally {
-			libmupdf._wasm_free(password)
-		}
+		return libmupdf._wasm_authenticate_password(this.pointer, STRING(password))
 	}
 
 	hasPermission(flag) {
@@ -721,15 +714,10 @@ class Document extends Userdata {
 	}
 
 	getMetaData(key) {
-		key = allocateUTF8(key)
-		try {
-			let value = libmupdf._wasm_lookup_metadata(this.pointer, key)
-			if (value)
-				return libmupdf.UTF8ToString(value)
-			return undefined
-		} finally {
-			libmupdf._wasm_free(key)
-		}
+		let value = libmupdf._wasm_lookup_metadata(this.pointer, STRING(key))
+		if (value)
+			return libmupdf.UTF8ToString(value)
+		return undefined
 	}
 
 	setMetaData(key, value) {
@@ -776,45 +764,39 @@ class Document extends Userdata {
 			while (outline) {
 				let item = {}
 
-				let title = libmupdf._wasm_outline_title(outline)
+				let title = libmupdf._wasm_outline_get_title(outline)
 				if (title)
 					item.title = libmupdf.UTF8ToString(title)
 
-				let uri = libmupdf._wasm_outline_uri(outline)
+				let uri = libmupdf._wasm_outline_get_uri(outline)
 				if (uri)
 					item.uri = libmupdf.UTF8ToString(uri)
 
-				let page = libmupdf._wasm_outline_page(doc.pointer, outline)
+				let page = libmupdf._wasm_outline_get_page(doc.pointer, outline)
 				if (page >= 0)
 					item.page = page
 
-				let down = libmupdf._wasm_outline_down(outline)
+				let down = libmupdf._wasm_outline_get_down(outline)
 				if (down)
 					item.down = to_outline(down)
 
 				result.push(item)
 
-				outline = libmupdf._wasm_outline_next(outline)
+				outline = libmupdf._wasm_outline_get_next(outline)
 			}
 			return result
 		}
 		let root = libmupdf._wasm_load_outline(this.pointer)
 		if (root)
-			return to_outline(libmupdf._wasm_load_outline(this.pointer))
+			return to_outline(root)
+		return null
 	}
 
 	resolveLink(link) {
 		if (link instanceof Link)
 			return libmupdf._wasm_resolve_link(this.pointer, libmupdf._wasm_link_uri(link.pointer))
-		link = allocateUTF8(link)
-		try {
-			return libmupdf._wasm_resolve_link(this.pointer, link)
-		} finally {
-			libmupdf._wasm_free(link)
-		}
+		return libmupdf._wasm_resolve_link(this.pointer, STRING(link))
 	}
-
-	// TODO: resolveLinkDestination
 }
 
 class PDFDocument extends Document {
@@ -842,41 +824,25 @@ class Page extends Userdata {
 	run(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
-		libmupdf._wasm_run_page(this.pointer,
-			device.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5])
+		libmupdf._wasm_run_page(this.pointer, device.pointer, MATRIX(matrix))
 	}
 
 	runPageContents(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
-		libmupdf._wasm_run_page_contents(this.pointer,
-			device.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5])
+		libmupdf._wasm_run_page_contents(this.pointer, device.pointer, MATRIX(matrix))
 	}
 
 	runPageAnnots(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
-		libmupdf._wasm_run_page_annots(this.pointer,
-			device.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5])
+		libmupdf._wasm_run_page_annots(this.pointer, device.pointer, MATRIX(matrix))
 	}
 
 	runPageWidgets(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
-		libmupdf._wasm_run_page_widgets(this.pointer,
-			device.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5])
+		libmupdf._wasm_run_page_widgets(this.pointer, device.pointer, MATRIX(matrix))
 	}
 
 	toPixmap(matrix, colorspace, alpha = false, showExtras = true) {
@@ -885,16 +851,12 @@ class Page extends Userdata {
 		let result
 		if (showExtras)
 			result = libmupdf._wasm_new_pixmap_from_page(this.pointer,
-				matrix[0], matrix[1],
-				matrix[2], matrix[3],
-				matrix[4], matrix[5],
+				MATRIX(matrix),
 				colorspace.pointer,
 				alpha)
 		else
 			result = libmupdf._wasm_new_pixmap_from_page_contents(this.pointer,
-				matrix[0], matrix[1],
-				matrix[2], matrix[3],
-				matrix[4], matrix[5],
+				MATRIX(matrix),
 				colorspace.pointer,
 				alpha)
 		return new Pixmap(result)
@@ -919,20 +881,19 @@ class Page extends Userdata {
 		let link = libmupdf._wasm_load_links(this.pointer)
 		while (link) {
 			links.push(new Link(libmupdf._wasm_keep_link(link)))
-			link = libmupdf._wasm_next_link(link)
+			link = libmupdf._wasm_link_get_next(link)
 		}
 		return links
 	}
 
 	search(needle, max_hits = 500) {
 		checkType(needle, "string")
-		needle = allocateUTF8(needle)
 		let hits = 0
 		let marks = 0
 		try {
 			hits = libmupdf._wasm_malloc(32 * max_hits)
 			marks = libmupdf._wasm_malloc(4 * max_hits)
-			let n = libmupdf._wasm_search_page(this.pointer, needle, marks, hits, max_hits)
+			let n = libmupdf._wasm_search_page(this.pointer, STRING(needle), marks, hits, max_hits)
 			let outer = []
 			if (n > 0) {
 				let inner = []
@@ -949,7 +910,6 @@ class Page extends Userdata {
 			}
 			return outer
 		} finally {
-			libmupdf._wasm_free(needle)
 			libmupdf._wasm_free(marks)
 			libmupdf._wasm_free(hits)
 		}
@@ -1021,12 +981,7 @@ class PDFPage extends Page {
 
 	createLink(bbox, uri) {
 		checkRect(bbox)
-		uri = allocateUTF8(uri)
-		try {
-			return new Link(libmupdf._wasm_pdf_create_link(this.pointer, bbox[0], bbox[1], bbox[2], bbox[3], uri))
-		} finally {
-			libmupdf._wasm_free(uri)
-		}
+		return new Link(libmupdf._wasm_pdf_create_link(this.pointer, RECT(bbox), STRING(uri)))
 	}
 }
 
@@ -1034,37 +989,20 @@ class Link extends Userdata {
 	static _drop = "_wasm_drop_link"
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_link_rect(this.pointer))
-	}
-
-	setBounds(rect) {
-		libmupdf._wasm_link_set_rect(this.pointer, rect[0], rect[1], rect[2], rect[3])
+		return rect_from_wasm(libmupdf._wasm_link_get_rect(this.pointer))
 	}
 
 	getURI() {
-		return libmupdf.UTF8ToString(libmupdf._wasm_link_uri(this.pointer))
-	}
-
-	setURI(uri) {
-		uri = allocateUTF8(uri)
-		try {
-			libmupdf._wasm_link_set_uri(this.pointer, uri)
-		} finally {
-			libmupdf._wasm_free(uri)
-		}
+		return libmupdf.UTF8ToString(libmupdf._wasm_link_get_uri(this.pointer))
 	}
 
 	isExternal() {
-		return !!libmupdf._wasm_is_external_link(this.pointer)
+		return this.getURI().test(/^[A-Za-z][A-Za-z0-9+-.]*:/)
 	}
 }
 
 class PDFAnnotation extends Userdata {
 	static _drop = "_wasm_pdf_drop_annot"
-
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_pdf_drop_annot)
-	}
 
 	/* IMPORTANT: Keep in sync with mupdf/pdf/annot.h and PDFAnnotation.java */
 	static TYPES = [
@@ -1136,12 +1074,7 @@ class PDFAnnotation extends Userdata {
 	run(device, matrix) {
 		checkType(device, Device)
 		checkMatrix(matrix)
-		libmupdf._wasm_pdf_run_annot(this.pointer,
-			device.pointer,
-			matrix[0], matrix[1],
-			matrix[2], matrix[3],
-			matrix[4], matrix[5]
-		)
+		libmupdf._wasm_pdf_run_annot(this.pointer, device.pointer, MATRIX(matrix))
 	}
 
 	toPixmap(matrix, colorspace, alpha = false) {
@@ -1150,9 +1083,7 @@ class PDFAnnotation extends Userdata {
 		return new Pixmap(
 			libmupdf._wasm_pdf_new_pixmap_from_annot(
 				this.pointer,
-				matrix[0], matrix[1],
-				matrix[2], matrix[3],
-				matrix[4], matrix[5],
+				MATRIX(matrix),
 				colorspace.pointer,
 				alpha)
 		)
@@ -1194,12 +1125,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setContents(text) {
-		let text_ptr = allocateUTF8(text)
-		try {
-			libmupdf._wasm_pdf_set_annot_contents(this.pointer, text_ptr)
-		} finally {
-			libmupdf._wasm_free(text_ptr)
-		}
+		libmupdf._wasm_pdf_set_annot_contents(this.pointer, STRING(text))
 	}
 
 
@@ -1211,7 +1137,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setPopup(rect) {
-		libmupdf._wasm_pdf_set_annot_popup(this.pointer, rect[0], rect[1], rect[2], rect[3])
+		libmupdf._wasm_pdf_set_annot_popup(this.pointer, RECT(rect))
 	}
 
 	// TODO
@@ -1225,7 +1151,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setRect(rect) {
-		libmupdf._wasm_pdf_set_annot_rect(this.pointer, rect[0], rect[1], rect[2], rect[3])
+		libmupdf._wasm_pdf_set_annot_rect(this.pointer, RECT(rect))
 	}
 
 	hasOpen() {
@@ -1250,12 +1176,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setIconName(name) {
-		let name_ptr = allocateUTF8(name)
-		try {
-			libmupdf._wasm_pdf_set_annot_icon_name(this.pointer, name_ptr)
-		} finally {
-			libmupdf._wasm_free(name_ptr)
-		}
+		libmupdf._wasm_pdf_set_annot_icon_name(this.pointer, STRING(name))
 	}
 
 	// TODO - line endings
@@ -1276,12 +1197,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setLanguage(lang) {
-		let lang_ptr = allocateUTF8(lang)
-		try {
-			libmupdf._wasm_pdf_set_annot_language(this.pointer, lang_ptr)
-		} finally {
-			libmupdf._wasm_free(lang_ptr)
-		}
+		libmupdf._wasm_pdf_set_annot_language(this.pointer, STRING(lang))
 	}
 
 	// TODO
@@ -1380,12 +1296,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setAuthor(name) {
-		let name_ptr = allocateUTF8(name)
-		try {
-			libmupdf._wasm_pdf_set_annot_author(this.pointer, name_ptr)
-		} finally {
-			libmupdf._wasm_free(name_ptr)
-		}
+		libmupdf._wasm_pdf_set_annot_author(this.pointer, STRING(name))
 	}
 
 	// TODO - default appearance
@@ -1421,9 +1332,6 @@ class PDFAnnotation extends Userdata {
 }
 
 class PDFWidget extends PDFAnnotation {
-	constructor(pointer) {
-		super(pointer, libmupdf._wasm_pdf_drop_annot)
-	}
 	
 	/* IMPORTANT: Keep in sync with mupdf/pdf/widget.h and PDFWidget.java */
 	static TYPE_UNKNOWN = 0;
@@ -1442,37 +1350,40 @@ class PDFWidget extends PDFAnnotation {
 	static TX_FORMAT_TIME = 4;
 
 	/* Field flags */
-	static PDF_FIELD_IS_READ_ONLY = 1;
-	static PDF_FIELD_IS_REQUIRED = 1 << 1;
-	static PDF_FIELD_IS_NO_EXPORT = 1 << 2;
+	static FIELD_IS_READ_ONLY = 1;
+	static FIELD_IS_REQUIRED = 1 << 1;
+	static FIELD_IS_NO_EXPORT = 1 << 2;
 
 	/* Text fields */
-	static PDF_TX_FIELD_IS_MULTILINE = 1 << 12;
-	static PDF_TX_FIELD_IS_PASSWORD = 1 << 13;
-	static PDF_TX_FIELD_IS_COMB = 1 << 24;
+	static TX_FIELD_IS_MULTILINE = 1 << 12;
+	static TX_FIELD_IS_PASSWORD = 1 << 13;
+	static TX_FIELD_IS_COMB = 1 << 24;
 
 	/* Button fields */
-	static PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF = 1 << 14;
-	static PDF_BTN_FIELD_IS_RADIO = 1 << 15;
-	static PDF_BTN_FIELD_IS_PUSHBUTTON = 1 << 16;
+	static BTN_FIELD_IS_NO_TOGGLE_TO_OFF = 1 << 14;
+	static BTN_FIELD_IS_RADIO = 1 << 15;
+	static BTN_FIELD_IS_PUSHBUTTON = 1 << 16;
 
 	/* Choice fields */
-	static PDF_CH_FIELD_IS_COMBO = 1 << 17;
-	static PDF_CH_FIELD_IS_EDIT = 1 << 18;
-	static PDF_CH_FIELD_IS_SORT = 1 << 19;
-	static PDF_CH_FIELD_IS_MULTI_SELECT = 1 << 21;
+	static CH_FIELD_IS_COMBO = 1 << 17;
+	static CH_FIELD_IS_EDIT = 1 << 18;
+	static CH_FIELD_IS_SORT = 1 << 19;
+	static CH_FIELD_IS_MULTI_SELECT = 1 << 21;
 
 	/* Signature appearance */
-	static PDF_SIGNATURE_SHOW_LABELS = 1;
-	static PDF_SIGNATURE_SHOW_DN = 2;
-	static PDF_SIGNATURE_SHOW_DATE = 4;
-	static PDF_SIGNATURE_SHOW_TEXT_NAME = 8;
-	static PDF_SIGNATURE_SHOW_GRAPHIC_NAME = 16;
-	static PDF_SIGNATURE_SHOW_LOGO = 32;
-	static PDF_SIGNATURE_DEFAULT_APPEARANCE = 63;
+	static SIGNATURE_SHOW_LABELS = 1;
+	static SIGNATURE_SHOW_DN = 2;
+	static SIGNATURE_SHOW_DATE = 4;
+	static SIGNATURE_SHOW_TEXT_NAME = 8;
+	static SIGNATURE_SHOW_GRAPHIC_NAME = 16;
+	static SIGNATURE_SHOW_LOGO = 32;
+	static SIGNATURE_DEFAULT_APPEARANCE = 63;
 
 	// TODO
 }
+
+
+
 
 // Background progressive fetch
 
@@ -1485,15 +1396,8 @@ class TryLaterError extends Error {
 
 class Stream extends Userdata {
 	static _drop = "_wasm_drop_stream"
-
 	constructor(url, contentLength, block_size, prefetch) {
-		let url_ptr = allocateUTF8(url)
-		try {
-			let pointer = libmupdf._wasm_open_stream_from_url(url_ptr, contentLength, block_size, prefetch)
-			super(pointer)
-		} finally {
-			libmupdf._wasm_free(url_ptr)
-		}
+		super(libmupdf._wasm_open_stream_from_url(STRING(url), contentLength, block_size, prefetch))
 	}
 }
 
@@ -1627,10 +1531,14 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	libmupdf = m
 	libmupdf._wasm_init_context()
 
-	ColorSpace.DeviceGray = new ColorSpace("DeviceGray", libmupdf._wasm_device_gray())
-	ColorSpace.DeviceRGB = new ColorSpace("DeviceRGB", libmupdf._wasm_device_rgb())
-	ColorSpace.DeviceBGR = new ColorSpace("DeviceBGR", libmupdf._wasm_device_bgr())
-	ColorSpace.DeviceCMYK = new ColorSpace("DeviceCMYK", libmupdf._wasm_device_cmyk())
+	// To pass Rect and Matrix as pointer arguments
+	in_rect = libmupdf._wasm_malloc(4 * 4) >> 2
+	in_matrix = libmupdf._wasm_malloc(4 * 6) >> 2
+
+	ColorSpace.DeviceGray = new ColorSpace(libmupdf._wasm_device_gray())
+	ColorSpace.DeviceRGB = new ColorSpace(libmupdf._wasm_device_rgb())
+	ColorSpace.DeviceBGR = new ColorSpace(libmupdf._wasm_device_bgr())
+	ColorSpace.DeviceCMYK = new ColorSpace(libmupdf._wasm_device_cmyk())
 })
 
 // If running in Node.js environment
