@@ -52,38 +52,42 @@ function allocateUTF8(str) {
 	return pointer
 }
 
-let in_rect = 0
-let in_matrix = 0
-let in_string = 0
+let _wasm_rect = 0
+let _wasm_matrix = 0
+let _wasm_string = 0
 
 function STRING(s) {
-	if (in_string) {
-		libmupdf._wasm_free(in_string)
-		in_string = 0
+	if (_wasm_string) {
+		libmupdf._wasm_free(_wasm_string)
+		_wasm_string = 0
 	}
-	in_string = allocateUTF8(s)
-	return in_string
+	_wasm_string = allocateUTF8(s)
+	return _wasm_string
 }
 
 function RECT(r) {
-	libmupdf.HEAPF32[in_rect + 0] = r[0]
-	libmupdf.HEAPF32[in_rect + 1] = r[1]
-	libmupdf.HEAPF32[in_rect + 2] = r[2]
-	libmupdf.HEAPF32[in_rect + 3] = r[3]
-	return in_rect << 2
+	libmupdf.HEAPF32[_wasm_rect + 0] = r[0]
+	libmupdf.HEAPF32[_wasm_rect + 1] = r[1]
+	libmupdf.HEAPF32[_wasm_rect + 2] = r[2]
+	libmupdf.HEAPF32[_wasm_rect + 3] = r[3]
+	return _wasm_rect << 2
 }
 
 function MATRIX(m) {
-	libmupdf.HEAPF32[in_matrix + 0] = m[0]
-	libmupdf.HEAPF32[in_matrix + 1] = m[1]
-	libmupdf.HEAPF32[in_matrix + 2] = m[2]
-	libmupdf.HEAPF32[in_matrix + 3] = m[3]
-	libmupdf.HEAPF32[in_matrix + 4] = m[4]
-	libmupdf.HEAPF32[in_matrix + 5] = m[5]
-	return in_matrix << 2
+	libmupdf.HEAPF32[_wasm_matrix + 0] = m[0]
+	libmupdf.HEAPF32[_wasm_matrix + 1] = m[1]
+	libmupdf.HEAPF32[_wasm_matrix + 2] = m[2]
+	libmupdf.HEAPF32[_wasm_matrix + 3] = m[3]
+	libmupdf.HEAPF32[_wasm_matrix + 4] = m[4]
+	libmupdf.HEAPF32[_wasm_matrix + 5] = m[5]
+	return _wasm_matrix << 2
 }
 
-function point_from_wasm(ptr) {
+function fromString(ptr) {
+	return libmupdf.UTF8ToString(ptr)
+}
+
+function fromPoint(ptr) {
 	ptr = ptr >> 2
 	return [
 		libmupdf.HEAPF32[ptr + 0],
@@ -91,7 +95,7 @@ function point_from_wasm(ptr) {
 	]
 }
 
-function rect_from_wasm(ptr) {
+function fromRect(ptr) {
 	ptr = ptr >> 2
 	return [
 		libmupdf.HEAPF32[ptr + 0],
@@ -101,7 +105,7 @@ function rect_from_wasm(ptr) {
 	]
 }
 
-function matrix_from_wasm(ptr) {
+function fromMatrix(ptr) {
 	ptr = ptr >> 2
 	return [
 		libmupdf.HEAPF32[ptr + 0],
@@ -113,7 +117,7 @@ function matrix_from_wasm(ptr) {
 	]
 }
 
-function quad_from_wasm(ptr) {
+function fromQuad(ptr) {
 	ptr = ptr >> 2
 	return [
 		libmupdf.HEAPF32[ptr + 0],
@@ -316,7 +320,7 @@ class Buffer extends Userdata {
 
 	asString() {
 		let data = libmupdf._wasm_buffer_data(this.pointer)
-		return libmupdf.UTF8ToString(data)
+		return fromString(data)
 	}
 }
 
@@ -327,7 +331,7 @@ class ColorSpace extends Userdata {
 		super(pointer)
 	}
 	getName() {
-		return libmupdf.UTF8ToString(libmupdf._wasm_colorspace_get_name(this.pointer))
+		return fromString(libmupdf._wasm_colorspace_get_name(this.pointer))
 	}
 	toString() {
 		return "[ColorSpace " + this.getName() + "]"
@@ -384,7 +388,7 @@ class Path extends Userdata {
 		super(libmupdf._wasm_new_path())
 	}
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_bound_path(this.pointer))
+		return fromRect(libmupdf._wasm_bound_path(this.pointer))
 	}
 	moveTo(x, y) {
 		libmupdf._wasm_moveto(this.pointer, x, y)
@@ -422,7 +426,7 @@ class Text extends Userdata {
 		super(libmupdf._wasm_new_text())
 	}
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_bound_text(this.pointer))
+		return fromRect(libmupdf._wasm_bound_text(this.pointer))
 	}
 	showGlyph(font, trm, gid, uni, wmode = 0) {
 		checkType(font, Font)
@@ -464,14 +468,14 @@ class DisplayList extends Userdata {
 		if (typeof arg1 === "number") {
 			pointer = arg1
 		} else {
-			let mediabox = arg1
-			pointer = libmupdf._wasm_new_display_list(mediabox[0], mediabox[1], mediabox[1], mediabox[2])
+			checkRect(arg1)
+			pointer = libmupdf._wasm_new_display_list(RECT(arg1))
 		}
 		super(pointer)
 	}
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_bound_display_list(this.pointer))
+		return fromRect(libmupdf._wasm_bound_display_list(this.pointer))
 	}
 
 	// TODO: run
@@ -552,11 +556,11 @@ class StructuredText extends Userdata {
 		let block = libmupdf._wasm_stext_page_get_first_block(this.pointer)
 		while (block) {
 			let block_type = libmupdf._wasm_stext_block_get_type(block)
-			let block_bbox = rect_from_wasm(libmupdf._wasm_stext_block_get_bbox(block))
+			let block_bbox = fromRect(libmupdf._wasm_stext_block_get_bbox(block))
 
 			if (block_type === 1) {
 				if (typeof walker.onImageBlock) {
-					let matrix = matrix_from_wasm(libmupdf._wasm_stext_block_get_transform(block))
+					let matrix = fromMatrix(libmupdf._wasm_stext_block_get_transform(block))
 					let image = new Image(libmupdf._wasm_stext_block_get_image(block))
 					walker.onImageBlock(block_bbox, matrix, image)
 				}
@@ -566,7 +570,7 @@ class StructuredText extends Userdata {
 
 				let line = libmupdf._wasm_stext_block_get_first_line(block)
 				while (line) {
-					let line_bbox = rect_from_wasm(libmupdf._wasm_stext_line_get_bbox(line))
+					let line_bbox = fromRect(libmupdf._wasm_stext_line_get_bbox(line))
 					let line_wmode = libmupdf._wasm_stext_line_get_wmode(line)
 
 					if (walker.beginLine)
@@ -576,10 +580,10 @@ class StructuredText extends Userdata {
 						let ch = libmupdf._wasm_stext_line_get_first_char(line)
 						while (ch) {
 							let ch_rune = String.fromCharCode(libmupdf._wasm_stext_char_get_c(ch))
-							let ch_origin = point_from_wasm(libmupdf._wasm_stext_char_get_origin(ch))
+							let ch_origin = fromPoint(libmupdf._wasm_stext_char_get_origin(ch))
 							let ch_font = new Font(libmupdf._wasm_stext_char_get_font(ch))
 							let ch_size = libmupdf._wasm_stext_char_get_size(ch)
-							let ch_quad = quad_from_wasm(libmupdf._wasm_stext_char_get_quad(ch))
+							let ch_quad = fromQuad(libmupdf._wasm_stext_char_get_quad(ch))
 
 							walker.onChar(ch_rune, ch_origin, ch_font, ch_size, ch_quad)
 
@@ -608,7 +612,7 @@ class StructuredText extends Userdata {
 
 	asJSON(scale = 1) {
 		let text_ptr = libmupdf._wasm_print_stext_page_as_json(this.pointer, scale)
-		let text = libmupdf.UTF8ToString(text_ptr)
+		let text = fromString(text_ptr)
 		libmupdf._wasm_free(text_ptr)
 		return text
 	}
@@ -716,7 +720,7 @@ class Document extends Userdata {
 	getMetaData(key) {
 		let value = libmupdf._wasm_lookup_metadata(this.pointer, STRING(key))
 		if (value)
-			return libmupdf.UTF8ToString(value)
+			return fromString(value)
 		return undefined
 	}
 
@@ -766,11 +770,11 @@ class Document extends Userdata {
 
 				let title = libmupdf._wasm_outline_get_title(outline)
 				if (title)
-					item.title = libmupdf.UTF8ToString(title)
+					item.title = fromString(title)
 
 				let uri = libmupdf._wasm_outline_get_uri(outline)
 				if (uri)
-					item.uri = libmupdf.UTF8ToString(uri)
+					item.uri = fromString(uri)
 
 				let page = libmupdf._wasm_outline_get_page(doc.pointer, outline)
 				if (page >= 0)
@@ -818,7 +822,7 @@ class Page extends Userdata {
 	}
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_bound_page(this.pointer))
+		return fromRect(libmupdf._wasm_bound_page(this.pointer))
 	}
 
 	run(device, matrix) {
@@ -899,7 +903,7 @@ class Page extends Userdata {
 				let inner = []
 				for (let i = 0; i < n; ++i) {
 					let mark = libmupdf.HEAP32[(marks>>2) + i]
-					let quad = quad_from_wasm(hits + i * 32)
+					let quad = fromQuad(hits + i * 32)
 					if (i > 0 && mark) {
 						outer.push(inner)
 						inner = []
@@ -989,11 +993,11 @@ class Link extends Userdata {
 	static _drop = "_wasm_drop_link"
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_link_get_rect(this.pointer))
+		return fromRect(libmupdf._wasm_link_get_rect(this.pointer))
 	}
 
 	getURI() {
-		return libmupdf.UTF8ToString(libmupdf._wasm_link_get_uri(this.pointer))
+		return fromString(libmupdf._wasm_link_get_uri(this.pointer))
 	}
 
 	isExternal() {
@@ -1068,7 +1072,7 @@ class PDFAnnotation extends Userdata {
         static IS_LOCKED_CONTENTS = 1 << (10-1)
 
 	getBounds() {
-		return rect_from_wasm(libmupdf._wasm_pdf_bound_annot(this.pointer))
+		return fromRect(libmupdf._wasm_pdf_bound_annot(this.pointer))
 	}
 
 	run(device, matrix) {
@@ -1118,7 +1122,7 @@ class PDFAnnotation extends Userdata {
 	getContents() {
 		let text_ptr = libmupdf._wasm_pdf_annot_contents(this.pointer)
 		try {
-			return libmupdf.UTF8ToString(text_ptr)
+			return fromString(text_ptr)
 		} finally {
 			libmupdf._wasm_free(text_ptr)
 		}
@@ -1133,7 +1137,7 @@ class PDFAnnotation extends Userdata {
 
 
 	getPopup() {
-		return rect_from_wasm(libmupdf._wasm_pdf_annot_popup(this.pointer))
+		return fromRect(libmupdf._wasm_pdf_annot_popup(this.pointer))
 	}
 
 	setPopup(rect) {
@@ -1147,7 +1151,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	getRect() {
-		return rect_from_wasm(libmupdf._wasm_pdf_annot_rect(this.pointer))
+		return fromRect(libmupdf._wasm_pdf_annot_rect(this.pointer))
 	}
 
 	setRect(rect) {
@@ -1172,7 +1176,7 @@ class PDFAnnotation extends Userdata {
 
 	getIconName() {
 		// the string returned by this function is static and doesn't need to be freed
-		return libmupdf.UTF8ToString(libmupdf._wasm_pdf_annot_icon_name(this.pointer))
+		return fromString(libmupdf._wasm_pdf_annot_icon_name(this.pointer))
 	}
 
 	setIconName(name) {
@@ -1193,7 +1197,7 @@ class PDFAnnotation extends Userdata {
 
 	getLanguage() {
 		// the string returned by this function is static and doesn't need to be freed
-		return libmupdf.UTF8ToString(libmupdf._wasm_pdf_annot_language(this.pointer))
+		return fromString(libmupdf._wasm_pdf_annot_language(this.pointer))
 	}
 
 	setLanguage(lang) {
@@ -1289,7 +1293,7 @@ class PDFAnnotation extends Userdata {
 	author() {
 		let string_ptr = libmupdf._wasm_pdf_annot_author(this.pointer)
 		try {
-			return libmupdf.UTF8ToString(string_ptr)
+			return fromString(string_ptr)
 		} finally {
 			libmupdf._wasm_free(string_ptr)
 		}
@@ -1308,7 +1312,7 @@ class PDFAnnotation extends Userdata {
 	fieldValue() {
 		let string_ptr = libmupdf._wasm_pdf_annot_field_value(this.pointer)
 		try {
-			return libmupdf.UTF8ToString(string_ptr)
+			return fromString(string_ptr)
 		} finally {
 			libmupdf._wasm_free(string_ptr)
 		}
@@ -1317,7 +1321,7 @@ class PDFAnnotation extends Userdata {
 	fieldLabel() {
 		let string_ptr = libmupdf._wasm_pdf_annot_field_label(this.pointer)
 		try {
-			return libmupdf.UTF8ToString(string_ptr)
+			return fromString(string_ptr)
 		} finally {
 			libmupdf._wasm_free(string_ptr)
 		}
@@ -1506,6 +1510,7 @@ const mupdf = {
 	Path,
 	Text,
 	Pixmap,
+	DisplayList,
 	DrawDevice,
 	DisplayListDevice,
 	Document,
@@ -1532,8 +1537,8 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	libmupdf._wasm_init_context()
 
 	// To pass Rect and Matrix as pointer arguments
-	in_rect = libmupdf._wasm_malloc(4 * 4) >> 2
-	in_matrix = libmupdf._wasm_malloc(4 * 6) >> 2
+	_wasm_rect = libmupdf._wasm_malloc(4 * 4) >> 2
+	_wasm_matrix = libmupdf._wasm_malloc(4 * 6) >> 2
 
 	ColorSpace.DeviceGray = new ColorSpace(libmupdf._wasm_device_gray())
 	ColorSpace.DeviceRGB = new ColorSpace(libmupdf._wasm_device_rgb())
