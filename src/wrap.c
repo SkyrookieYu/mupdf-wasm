@@ -29,7 +29,6 @@
 // TODO: Text
 // TODO: Path
 
-// TODO: PDFDocument
 // TODO: PDFPage
 // TODO: PDFAnnotation
 // TODO: PDFWidget
@@ -500,13 +499,7 @@ void _wasm_end_layer(fz_device *dev)
 EXPORT
 fz_document_writer * wasm_new_document_writer(fz_buffer *buf, char *format, char *options)
 {
-	fz_document_writer *wri = NULL;
-	TRY ({
-		fz_output *out = fz_new_output_with_buffer(ctx, buf);
-		wri = fz_new_document_writer_with_output(ctx, out, format, options);
-		fz_drop_output(ctx, out);
-	})
-	return wri;
+	POINTER(fz_new_document_writer_with_buffer, buf, format, options)
 }
 
 EXPORT
@@ -537,6 +530,7 @@ unsigned char * wasm_print_stext_page_as_json(fz_stext_page *page, float scale)
 		fz_buffer *buf = fz_new_buffer(ctx, 1024);
 		fz_output *out = fz_new_output_with_buffer(ctx, buf);
 		fz_print_stext_page_as_json(ctx, out, page, scale);
+		fz_close_output(ctx, out);
 		fz_drop_output(ctx, out);
 		fz_terminate_buffer(ctx, buf);
 		fz_buffer_extract(ctx, buf, &data);
@@ -611,7 +605,6 @@ fz_outline * wasm_load_outline(fz_document *doc)
 EXPORT
 int wasm_outline_get_page(fz_document *doc, fz_outline *outline)
 {
-	// fz_location to page index wrapper
 	INTEGER(fz_page_number_from_location, doc, outline->page)
 }
 
@@ -698,7 +691,126 @@ pdf_page * wasm_pdf_page_from_fz_page(fz_page *page)
 	return pdf_page_from_fz_page(ctx, page);
 }
 
+EXPORT
+void wasm_pdf_set_page_labels(pdf_document *doc, int index, int style, char *prefix, int start)
+{
+	VOID(pdf_set_page_labels, doc, index, style, prefix, start)
+}
 
+EXPORT
+void wasm_pdf_delete_page_labels(pdf_document *doc, int index)
+{
+	VOID(pdf_delete_page_labels, doc, index)
+}
+
+EXPORT
+int wasm_pdf_version(pdf_document *doc)
+{
+	INTEGER(pdf_version, doc)
+}
+
+EXPORT
+char * wasm_pdf_document_language(pdf_document *doc)
+{
+	static char str[8];
+	TRY ({
+		fz_string_from_text_language(str, pdf_document_language(ctx, doc));
+	})
+	return str;
+}
+
+EXPORT
+void wasm_pdf_set_document_language(pdf_document *doc, char *str)
+{
+	VOID(pdf_set_document_language, doc, fz_text_language_from_string(str))
+}
+
+EXPORT
+pdf_obj * wasm_pdf_trailer(pdf_document *doc)
+{
+	POINTER(pdf_trailer, doc)
+}
+
+EXPORT
+int wasm_pdf_xref_len(pdf_document *doc)
+{
+	INTEGER(pdf_xref_len, doc)
+}
+
+EXPORT
+fz_buffer * wasm_pdf_write_document_buffer(pdf_document *doc, char *options)
+{
+	fz_buffer *buffer;
+	fz_output *output;
+	pdf_write_options pwo;
+	TRY ({
+		buffer = fz_new_buffer(ctx, 32 << 10);
+		output = fz_new_output_with_buffer(ctx, buffer);
+		pdf_parse_write_options(ctx, &pwo, options);
+		pdf_write_document(ctx, doc, output, &pwo);
+		fz_close_output(ctx, output);
+		fz_drop_output(ctx, output);
+	})
+	return buffer;
+}
+
+// === PDFObject ===
+
+#define PDF_IS(N) EXPORT int wasm_pdf_is_ ## N (pdf_obj *obj) { INTEGER(pdf_is_ ## N, obj) }
+#define PDF_TO(T,R,N) EXPORT T wasm_pdf_to_ ## N (pdf_obj *obj) { R(pdf_to_ ## N, obj) }
+
+PDF_IS(indirect)
+PDF_IS(bool)
+PDF_IS(number)
+PDF_IS(name)
+PDF_IS(string)
+
+PDF_IS(array)
+PDF_IS(dict)
+PDF_IS(stream)
+
+PDF_TO(int, INTEGER, num)
+PDF_TO(int, INTEGER, bool)
+PDF_TO(double, NUMBER, real)
+PDF_TO(char*, POINTER, name)
+PDF_TO(char*, POINTER, text_string)
+
+EXPORT
+pdf_obj * wasm_pdf_resolve_indirect(pdf_obj *obj)
+{
+	POINTER(pdf_resolve_indirect, obj)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_array_len(pdf_obj *obj)
+{
+	POINTER(pdf_array_len, obj)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_array_get(pdf_obj *obj, int idx)
+{
+	POINTER(pdf_array_get, obj, idx)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_dict_get(pdf_obj *obj, pdf_obj *key)
+{
+	POINTER(pdf_dict_get, obj, key)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_dict_gets(pdf_obj *obj, char *key)
+{
+	POINTER(pdf_dict_gets, obj, key)
+}
+
+EXPORT
+char * wasm_pdf_sprint_obj(pdf_obj *obj, int tight, int ascii)
+{
+	size_t len;
+	POINTER(pdf_sprint_obj, NULL, 0, &len, obj, tight, ascii)
+}
 
 /* PROGRESSIVE FETCH STREAM */
 

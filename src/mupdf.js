@@ -115,6 +115,7 @@ function fromString(ptr) {
 function fromStringFree(ptr) {
 	let str = libmupdf.UTF8ToString(ptr)
 	libmupdf._wasm_free(ptr)
+	return str
 }
 
 function fromPoint(ptr) {
@@ -270,8 +271,6 @@ class Userdata {
 	constructor(pointer) {
 		if (typeof pointer !== "number")
 			throw new Error("invalid pointer: " + typeof pointer)
-		if (pointer === 0)
-			throw new Error("invalid pointer: null")
 
 		if (!this.constructor._finalizer) {
 			this.constructor._drop = libmupdf[this.constructor._drop]
@@ -681,6 +680,26 @@ class Pixmap extends Userdata {
 	}
 
 	// TODO: asJPEG(quality)
+
+	invert() {
+		libmupdf._wasm_invert_pixmap(this.pointer)
+	}
+
+	invertLuminance() {
+		libmupdf._wasm_invert_pixmap_luminance(this.pointer)
+	}
+
+	gamma(p) {
+		libmupdf._wasm_gamma_pixmap(this.pointer, p)
+	}
+
+	tint(black, white) {
+		if (black instanceof Array)
+			black = ( ( (black[0] * 255) << 16 ) | ( (black[1] * 255) << 8 ) | ( (black[2] * 255) ) )
+		if (white instanceof Array)
+			white = ( ( (white[0] * 255) << 16 ) | ( (white[1] * 255) << 8 ) | ( (white[2] * 255) ) )
+		libmupdf._wasm_tint_pixmap(this.pointer, black, white)
+	}
 }
 
 class StructuredText extends Userdata {
@@ -949,6 +968,36 @@ class DisplayListDevice extends Device {
 	}
 }
 
+// === DocumentWriter ===
+
+class DocumentWriter extends Userdata {
+	static _drop = "_wasm_drop_document_writer"
+
+	constructor(buffer, format, options) {
+		checkType(buffer, Buffer)
+		super(
+			libmupdf._wasm_new_document_writer_with_buffer(
+				buffer.pointer,
+				STRING(format),
+				STRING(options)
+			)
+		)
+	}
+
+	beginPage(mediabox) {
+		checkRect(mediabox)
+		return new Device(libmupdf._wasm_begin_page(this.pointer, RECT(mediabox)))
+	}
+
+	endPage() {
+		libmupdf._wasm_end_page(this.pointer)
+	}
+
+	close() {
+		libmupdf._wasm_close_document_writer(this.pointer)
+	}
+}
+
 // === Document ===
 
 class Document extends Userdata {
@@ -1041,11 +1090,6 @@ class Document extends Userdata {
 		}
 	}
 
-	resolveLink(link) {
-		// TODO
-		return 0
-	}
-
 	countPages() {
 		return libmupdf._wasm_count_pages(this.pointer)
 	}
@@ -1109,14 +1153,19 @@ class Document extends Userdata {
 	}
 }
 
-class PDFDocument extends Document {
-	constructor(pointer) {
-		if (!pointer)
-			pointer = libmupdf._wasm_pdf_create_document()
-		super(pointer)
+class Link extends Userdata {
+	static _drop = "_wasm_drop_link"
+
+	getBounds() {
+		return fromRect(libmupdf._wasm_link_get_rect(this.pointer))
 	}
-	isPDF() {
-		return true
+
+	getURI() {
+		return fromString(libmupdf._wasm_link_get_uri(this.pointer))
+	}
+
+	isExternal() {
+		return this.getURI().test(/^[A-Za-z][A-Za-z0-9+-.]*:/)
 	}
 }
 
@@ -1129,6 +1178,10 @@ class Page extends Userdata {
 
 	getBounds() {
 		return fromRect(libmupdf._wasm_bound_page(this.pointer))
+	}
+
+	getLabel() {
+		return fromString(libmupdf._wasm_page_label(this.pointer))
 	}
 
 	run(device, matrix) {
@@ -1226,6 +1279,60 @@ class Page extends Userdata {
 	}
 }
 
+// === PDFDocument ===
+
+class PDFDocument extends Document {
+	constructor(pointer) {
+		if (!pointer)
+			pointer = libmupdf._wasm_pdf_create_document()
+		super(pointer)
+	}
+
+	isPDF() {
+		return true
+	}
+
+	getVersion() {
+		return libmupdf._wasm_pdf_version(this.pointer)
+	}
+
+	getLanguage() {
+		return fromString(libmupdf._wasm_pdf_document_language(this.pointer))
+	}
+
+	setLanguage(lang) {
+		libmupdf._wasm_pdf_set_document_language(this.pointer, STRING(lang))
+	}
+
+	countObjects() {
+		return libmupdf._wasm_pdf_xref_len(this.pointer)
+	}
+
+	getTrailer() {
+		return new PDFObject(libmupdf._wasm_pdf_trailer(this.pointer))
+	}
+
+	saveAsBuffer(options) {
+		// TODO: object options to string options?
+		return new Buffer(libmupdf._wasm_pdf_write_document_buffer(this.pointer, STRING(options)))
+	}
+
+	static PAGE_LABEL_NONE = "\0"
+	static PAGE_LABEL_DECIMAL = "D"
+	static PAGE_LABEL_ROMAN_UC = "R"
+	static PAGE_LABEL_ROMAN_LC = "r"
+	static PAGE_LABEL_ALPHA_UC = "A"
+	static PAGE_LABEL_ALPHA_LC = "a"
+
+	setPageLabels(index, style = "D", prefix = "", start = 1) {
+		libmupdf._wasm_pdf_set_page_labels(this.pointer, index, style.charCodeAt(0), STRING(prefix), start)
+	}
+
+	deletePageLabels(index) {
+		libmupdf._wasm_pdf_delete_page_labels(this.pointer, index)
+	}
+}
+
 class PDFPage extends Page {
 	constructor(pointer) {
 		super(pointer)
@@ -1292,22 +1399,6 @@ class PDFPage extends Page {
 	createLink(bbox, uri) {
 		checkRect(bbox)
 		return new Link(libmupdf._wasm_pdf_create_link(this.pointer, RECT(bbox), STRING(uri)))
-	}
-}
-
-class Link extends Userdata {
-	static _drop = "_wasm_drop_link"
-
-	getBounds() {
-		return fromRect(libmupdf._wasm_link_get_rect(this.pointer))
-	}
-
-	getURI() {
-		return fromString(libmupdf._wasm_link_get_uri(this.pointer))
-	}
-
-	isExternal() {
-		return this.getURI().test(/^[A-Za-z][A-Za-z0-9+-.]*:/)
 	}
 }
 
@@ -1432,10 +1523,6 @@ class PDFAnnotation extends Userdata {
 	setContents(text) {
 		libmupdf._wasm_pdf_set_annot_contents(this.pointer, STRING(text))
 	}
-
-
-
-
 
 	getPopup() {
 		return fromRect(libmupdf._wasm_pdf_annot_popup(this.pointer))
@@ -1634,7 +1721,7 @@ class PDFAnnotation extends Userdata {
 }
 
 class PDFWidget extends PDFAnnotation {
-	
+
 	/* IMPORTANT: Keep in sync with mupdf/pdf/widget.h and PDFWidget.java */
 	static TYPE_UNKNOWN = 0;
 	static TYPE_BUTTON = 1;
@@ -1682,6 +1769,95 @@ class PDFWidget extends PDFAnnotation {
 	static SIGNATURE_DEFAULT_APPEARANCE = 63;
 
 	// TODO
+}
+
+function fromPDFObject(ptr) {
+	if (ptr === 0)
+		return null
+	return new PDFObject(ptr)
+}
+
+class PDFObject extends Userdata {
+	static _drop = "_wasm_pdf_drop_obj"
+
+	constructor(pointer) {
+		super(libmupdf._wasm_pdf_keep_obj(pointer))
+	}
+
+	isNull() { return this.pointer === 0 }
+	isIndirect() { return libmupdf._wasm_pdf_is_indirect(this.pointer) }
+	isBoolean() { return libmupdf._wasm_pdf_is_bool(this.pointer) }
+	isInteger() { return libmupdf._wasm_pdf_is_int(this.pointer) }
+	isNumber() { return libmupdf._wasm_pdf_is_number(this.pointer) }
+	isName() { return libmupdf._wasm_pdf_is_name(this.pointer) }
+	isString() { return libmupdf._wasm_pdf_is_string(this.pointer) }
+	isArray() { return libmupdf._wasm_pdf_is_array(this.pointer) }
+	isDictionary() { return libmupdf._wasm_pdf_is_dict(this.pointer) }
+	isStream() { return libmupdf._wasm_pdf_is_stream(this.pointer) }
+
+	asIndirect() { return libmupdf._wasm_pdf_to_num(this.pointer) }
+	asBoolean() { return libmupdf._wasm_pdf_to_bool(this.pointer) }
+	asNumber() { return libmupdf._wasm_pdf_to_number(this.pointer) }
+	asName() { return libmupdf._wasm_pdf_to_name(this.pointer) }
+	asString() { return fromString(libmupdf._wasm_pdf_to_text_string(this.pointer)) }
+
+	readStream() { return new Buffer(libmupdf._wasm_pdf_load_stream(this.pointer)) }
+	readRawStream() { return new Buffer(libmupdf._wasm_pdf_load_raw_stream(this.pointer)) }
+
+	resolve() {
+		return fromPDFObject(libmupdf._wasm_pdf_resolve_indirect(this.pointer))
+	}
+
+	get length() {
+		return libmupdf._wasm_pdf_array_len(this.pointer)
+	}
+
+	get(key) {
+		if (typeof key === "number")
+			return fromPDFObject(libmupdf._wasm_pdf_array_get(this.pointer, key))
+		else if (typeof key === PDFObject)
+			return fromPDFObject(libmupdf._wasm_pdf_dict_get(this.pointer, key.pointer))
+		else
+			return fromPDFObject(libmupdf._wasm_pdf_dict_gets(this.pointer, STRING(key)))
+	}
+
+	put(key, value) {
+		checkType(value, PDFObject)
+		if (typeof key === "number")
+			libmupdf._wasm_pdf_array_put(this.pointer, key, value)
+		else if (typeof key === PDFObject)
+			libmupdf._wasm_pdf_dict_put(this.pointer, key.pointer, value)
+		else
+			libmupdf._wasm_pdf_dict_puts(this.pointer, STRING(key), value)
+	}
+
+	push(value) {
+		checkType(value, PDFObject)
+		libmupdf._wasm_pdf_array_push(this.pointer, value.pointer)
+	}
+
+	delete(key) {
+		if (typeof key === "number")
+			libmupdf._wasm_pdf_array_delete(this.pointer, key)
+		else if (typeof key === PDFObject)
+			libmupdf._wasm_pdf_dict_del(this.pointer, key.pointer)
+		else
+			libmupdf._wasm_pdf_dict_dels(this.pointer, STRING(key))
+	}
+
+	valueOf() {
+		if (this.isNull()) return null
+		if (this.isBoolean()) return this.asBoolean()
+		if (this.isNumber()) return this.asNumber()
+		if (this.isName()) return this.asName()
+		if (this.isString()) return this.asString()
+		if (this.isIndirect()) return "R"
+		return this
+	}
+
+	toString(tight = true, ascii = true) {
+		return fromStringFree(libmupdf._wasm_pdf_sprint_obj(this.pointer, tight, ascii))
+	}
 }
 
 
@@ -1813,6 +1989,9 @@ const mupdf = {
 	DisplayListDevice,
 	Document,
 	PDFDocument,
+	PDFAnnotation,
+	PDFPage,
+	PDFObject,
 	TryLaterError,
 	Stream,
 	onFetchCompleted: () => {},
