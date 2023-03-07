@@ -167,6 +167,7 @@ GET(image, int, n)
 GET(image, int, bpc)
 GET(image, int, xres)
 GET(image, int, yres)
+GET(image, int, imagemask)
 GET(image, fz_colorspace*, colorspace)
 GET(image, fz_image*, mask)
 
@@ -234,13 +235,19 @@ void wasm_append_buffer(fz_buffer *buf, fz_buffer *src)
 
 // --- ColorSpace ---
 
-EXPORT fz_colorspace * wasm_device_gray(void) { return fz_device_rgb(ctx); }
+EXPORT fz_colorspace * wasm_device_gray(void) { return fz_device_gray(ctx); }
 EXPORT fz_colorspace * wasm_device_rgb(void) { return fz_device_rgb(ctx); }
 EXPORT fz_colorspace * wasm_device_bgr(void) { return fz_device_bgr(ctx); }
 EXPORT fz_colorspace * wasm_device_cmyk(void) { return fz_device_cmyk(ctx); }
 EXPORT fz_colorspace * wasm_device_lab(void) { return fz_device_lab(ctx); }
 
 // --- Pixmap ---
+
+EXPORT
+fz_pixmap * wasm_get_pixmap_from_image(fz_image *image)
+{
+	POINTER(fz_get_pixmap_from_image, image, NULL, NULL, NULL, NULL)
+}
 
 EXPORT
 fz_pixmap * wasm_new_pixmap_from_page(fz_page *page, fz_matrix *ctm, fz_colorspace *colorspace, int alpha)
@@ -356,6 +363,138 @@ void wasm_close_device(fz_device *dev)
 	VOID(fz_close_device, dev)
 }
 
+EXPORT
+void wasm_fill_path(fz_device *dev, fz_path *path, int evenOdd, fz_matrix *ctm, fz_colorspace *colorspace, float *color, float alpha)
+{
+	VOID(fz_fill_path, dev, path, evenOdd, *ctm, colorspace, color, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_stroke_path(fz_device *dev, fz_path *path, fz_stroke_state *stroke, fz_matrix *ctm, fz_colorspace *colorspace, float *color, float alpha)
+{
+	VOID(fz_stroke_path, dev, path, stroke, *ctm, colorspace, color, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_clip_path(fz_device *dev, fz_path *path, int evenOdd, fz_matrix *ctm)
+{
+	VOID(fz_clip_path, dev, path, evenOdd, *ctm, fz_infinite_rect)
+}
+
+EXPORT
+void wasm_clip_stroke_path(fz_device *dev, fz_path *path, fz_stroke_state *stroke, fz_matrix *ctm)
+{
+	VOID(fz_clip_stroke_path, dev, path, stroke, *ctm, fz_infinite_rect)
+}
+
+EXPORT
+void wasm_fill_text(fz_device *dev, fz_text *text, fz_matrix *ctm, fz_colorspace *colorspace, float *color, float alpha)
+{
+	VOID(fz_fill_text, dev, text, *ctm, colorspace, color, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_stroke_text(fz_device *dev, fz_text *text, fz_stroke_state *stroke, fz_matrix *ctm, fz_colorspace *colorspace, float *color, float alpha)
+{
+	VOID(fz_stroke_text, dev, text, stroke, *ctm, colorspace, color, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_clip_text(fz_device *dev, fz_text *text, fz_matrix *ctm)
+{
+	VOID(fz_clip_text, dev, text, *ctm, fz_infinite_rect)
+}
+
+EXPORT
+void wasm_clip_stroke_text(fz_device *dev, fz_text *text, fz_stroke_state *stroke, fz_matrix *ctm)
+{
+	VOID(fz_clip_stroke_text, dev, text, stroke, *ctm, fz_infinite_rect)
+}
+
+EXPORT
+void wasm_ignore_text(fz_device *dev, fz_text *text, fz_matrix *ctm)
+{
+	VOID(fz_ignore_text, dev, text, *ctm)
+}
+
+EXPORT
+void wasm_fill_shade(fz_device *dev, fz_shade *shade, fz_matrix *ctm, float alpha)
+{
+	VOID(fz_fill_shade, dev, shade, *ctm, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_fill_image(fz_device *dev, fz_image *image, fz_matrix *ctm, float alpha)
+{
+	VOID(fz_fill_image, dev, image, *ctm, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_fill_image_mask(fz_device *dev, fz_image *image, fz_matrix *ctm, fz_colorspace *colorspace, float *color, float alpha)
+{
+	VOID(fz_fill_image_mask, dev, image, *ctm, colorspace, color, alpha, fz_default_color_params)
+}
+
+EXPORT
+void wasm_clip_image_mask(fz_device *dev, fz_image *image, fz_matrix *ctm)
+{
+	VOID(fz_clip_image_mask, dev, image, *ctm, fz_infinite_rect)
+}
+
+EXPORT
+void wasm_pop_clip(fz_device *dev)
+{
+	VOID(fz_pop_clip, dev)
+}
+
+EXPORT
+void wasm_begin_mask(fz_device *dev, fz_rect *area, int luminosity, fz_colorspace *colorspace, float *color)
+{
+	VOID(fz_begin_mask, dev, *area, luminosity, colorspace, color, fz_default_color_params)
+}
+
+EXPORT
+void wasm_end_mask(fz_device *dev)
+{
+	VOID(fz_end_mask, dev)
+}
+
+EXPORT
+void wasm_begin_group(fz_device *dev, fz_rect *area, fz_colorspace *colorspace, int isolated, int knockout, int blendmode, float alpha)
+{
+	VOID(fz_begin_group, dev, *area, colorspace, isolated, knockout, blendmode, alpha)
+}
+
+EXPORT
+void wasm_end_group(fz_device *dev)
+{
+	VOID(fz_end_group, dev)
+}
+
+EXPORT int
+_wasm_begin_tile(fz_device *dev, fz_rect *area, fz_rect *view, float xstep, float ystep, fz_matrix *ctm, int id)
+{
+	INTEGER(fz_begin_tile_id, dev, *area, *view, xstep, ystep, *ctm, id)
+}
+
+EXPORT
+void _wasm_end_tile(fz_device *dev)
+{
+	VOID(fz_end_tile, dev)
+}
+
+EXPORT
+void _wasm_begin_layer(fz_device *dev, char *name)
+{
+	VOID(fz_begin_layer, dev, name)
+}
+
+EXPORT
+void _wasm_end_layer(fz_device *dev)
+{
+	VOID(fz_end_layer, dev)
+}
+
 // --- DocumentWriter ---
 
 EXPORT
@@ -406,8 +545,6 @@ unsigned char * wasm_print_stext_page_as_json(fz_stext_page *page, float scale)
 }
 
 // TODO: search
-// TODO: highlight
-// TODO: copy
 
 // --- Document ---
 

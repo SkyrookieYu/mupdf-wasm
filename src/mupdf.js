@@ -35,6 +35,11 @@ function checkType(value, type) {
 		throw new TypeError("expected " + type.name)
 }
 
+function checkPoint(value) {
+	if (!Array.isArray(value) || value.length !== 2)
+		throw new TypeError("expected point")
+}
+
 function checkRect(value) {
 	if (!Array.isArray(value) || value.length !== 4)
 		throw new TypeError("expected rectangle")
@@ -42,7 +47,12 @@ function checkRect(value) {
 
 function checkMatrix(value) {
 	if (!Array.isArray(value) || value.length !== 6)
-		throw new TypeError("expected rectangle")
+		throw new TypeError("expected matrix")
+}
+
+function checkColor(value) {
+	if (!Array.isArray(value) || value.length < 1 || value.length > 4)
+		throw new TypeError("expected matrix")
 }
 
 function allocateUTF8(str) {
@@ -54,6 +64,7 @@ function allocateUTF8(str) {
 
 let _wasm_rect = 0
 let _wasm_matrix = 0
+let _wasm_color = 0
 let _wasm_string = 0
 
 function STRING(s) {
@@ -73,6 +84,14 @@ function RECT(r) {
 	return _wasm_rect << 2
 }
 
+function RECT2(r) {
+	libmupdf.HEAPF32[_wasm_rect + 4] = r[0]
+	libmupdf.HEAPF32[_wasm_rect + 5] = r[1]
+	libmupdf.HEAPF32[_wasm_rect + 6] = r[2]
+	libmupdf.HEAPF32[_wasm_rect + 7] = r[3]
+	return (_wasm_rect + 4) << 2
+}
+
 function MATRIX(m) {
 	libmupdf.HEAPF32[_wasm_matrix + 0] = m[0]
 	libmupdf.HEAPF32[_wasm_matrix + 1] = m[1]
@@ -83,8 +102,19 @@ function MATRIX(m) {
 	return _wasm_matrix << 2
 }
 
+function COLOR(c) {
+	for (let i = 0; i < c.length; ++i)
+		libmupdf.HEAPF32[_wasm_color + i] = c[i]
+	return _wasm_color << 2
+}
+
 function fromString(ptr) {
 	return libmupdf.UTF8ToString(ptr)
+}
+
+function fromStringFree(ptr) {
+	let str = libmupdf.UTF8ToString(ptr)
+	libmupdf._wasm_free(ptr)
 }
 
 function fromPoint(ptr) {
@@ -319,19 +349,34 @@ class Buffer extends Userdata {
 	}
 
 	asString() {
-		let data = libmupdf._wasm_buffer_data(this.pointer)
-		return fromString(data)
+		return fromString(libmupdf._wasm_buffer_data(this.pointer))
 	}
 }
 
 class ColorSpace extends Userdata {
 	static _drop = "_wasm_drop_colorspace"
+	static TYPES = [
+		"None",
+		"Gray",
+		"RGB",
+		"BGR",
+		"CMYK",
+		"Lab",
+		"Indexed",
+		"Separation"
+	]
 	constructor(pointer) {
 		// TODO: ICC profile
 		super(pointer)
 	}
 	getName() {
 		return fromString(libmupdf._wasm_colorspace_get_name(this.pointer))
+	}
+	getType() {
+		return ColorSpace.TYPES[libmupdf._wasm_colorspace_get_type(this.pointer)]
+	}
+	getNumberOfComponents() {
+		return libmupdf._wasm_colorspace_get_n(this.pointer)
 	}
 	toString() {
 		return "[ColorSpace " + this.getName() + "]"
@@ -341,7 +386,7 @@ class ColorSpace extends Userdata {
 class Font extends Userdata {
 	static _drop = "_wasm_drop_font"
 
-	constructor(arg1) {
+	constructor(arg1, arg2) {
 		let pointer = 0
 		if (typeof arg1 === "number") {
 			pointer = libmupdf._wasm_keep_font(arg1)
@@ -352,6 +397,10 @@ class Font extends Userdata {
 			pointer = libmupdf._wasm_new_font_from_buffer(arg1.pointer, arg2 | 0)
 		}
 		super(pointer)
+	}
+
+	getName() {
+		return fromString(libmupdf._wasm_font_get_name(this.pointer))
 	}
 
 	encodeCharacter(uni) {
@@ -379,7 +428,45 @@ class Image extends Userdata {
 		super(pointer)
 	}
 
-	// TODO: toPixmap
+	getWidth() {
+		return libmupdf._wasm_image_get_w(this.pointer)
+	}
+	getHeight() {
+		return libmupdf._wasm_image_get_h(this.pointer)
+	}
+	getNumberOfComponents() {
+		return libmupdf._wasm_image_get_n(this.pointer)
+	}
+	getBitsPerComponent() {
+		return libmupdf._wasm_image_get_bpc(this.pointer)
+	}
+	getXResolution() {
+		return libmupdf._wasm_image_get_xres(this.pointer)
+	}
+	getYResolution() {
+		return libmupdf._wasm_image_get_yres(this.pointer)
+	}
+	getImageMask() {
+		return libmupdf._wasm_image_get_imagemask(this.pointer)
+	}
+
+	getColorSpace() {
+		let cs = libmupdf._wasm_image_get_colorspace(this.pointer)
+		if (cs)
+			return new ColorSpace(cs)
+		return null
+	}
+
+	getMask() {
+		let mask = libmupdf._wasm_image_get_mask(this.pointer)
+		if (mask)
+			return new Image(mask)
+		return null
+	}
+
+	toPixmap() {
+		return new Pixmap(libmupdf._wasm_pdf_get_pixmap_from_image(this.pointer))
+	}
 }
 
 class Path extends Userdata {
@@ -416,18 +503,21 @@ class Path extends Userdata {
 		libmupdf._wasm_transform_path(this.pointer, MATRIX(matrix))
 	}
 	walk(walker) {
-		// TODO
+		throw "TODO"
 	}
 }
 
 class Text extends Userdata {
 	static _drop = "_wasm_drop_text"
+
 	constructor() {
 		super(libmupdf._wasm_new_text())
 	}
+
 	getBounds() {
 		return fromRect(libmupdf._wasm_bound_text(this.pointer))
 	}
+
 	showGlyph(font, trm, gid, uni, wmode = 0) {
 		checkType(font, Font)
 		checkMatrix(trm)
@@ -436,34 +526,38 @@ class Text extends Userdata {
 		libmupdf._wasm_show_glyph(
 			this.pointer,
 			font.pointer,
-			MATRIX(matrix),
+			MATRIX(trm),
 			gid,
 			uni,
 			wmode
 		)
 	}
+
 	showString(font, trm, str, wmode = 0) {
 		checkType(font, Font)
 		checkMatrix(trm)
 		checkType(str, "string")
-		out_trm = libmupdf._wasm_show_string(
-			this.pointer,
-			font.pointer,
-			MATRIX(matrix),
-			STRING(str),
-			wmode
+		out_trm = fromMatrix(
+			libmupdf._wasm_show_string(
+				this.pointer,
+				font.pointer,
+				MATRIX(trm),
+				STRING(str),
+				wmode
+			)
 		)
-		out_trm = out_trm >> 2
-		matrix[4] = libmupdf.HEAPF32[out_trm + 4]
-		matrix[5] = libmupdf.HEAPF32[out_trm + 5]
+		trm[4] = out_trm[4]
+		trm[5] = out_trm[5]
 	}
+
 	walk(walker) {
-		// TODO
+		throw "TODO"
 	}
 }
 
 class DisplayList extends Userdata {
 	static _drop = "_wasm_drop_display_list"
+
 	constructor(arg1) {
 		if (typeof arg1 === "number") {
 			pointer = arg1
@@ -478,14 +572,35 @@ class DisplayList extends Userdata {
 		return fromRect(libmupdf._wasm_bound_display_list(this.pointer))
 	}
 
-	// TODO: run
-	// TODO: toPixmap
-	// TODO: toStructuredText
+	toPixmap(matrix, colorspace, alpha = false) {
+		checkMatrix(matrix)
+		checkType(colorspace, ColorSpace)
+		return new Pixmap(
+			libmupdf._wasm_new_pixmap_from_display_list(
+				this.pointer,
+				MATRIX(matrix),
+				colorspace.pointer,
+				alpha
+			)
+		)
+	}
+
+	toStructuredText() {
+		return new StructuredText(libmupdf._wasm_new_stext_page_from_display_list(this.pointer))
+	}
+
+	run(device, matrix) {
+		checkType(device, Device)
+		checkMatrix(matrix)
+		libmupdf._wasm_run_display_list(this.pointer, device.pointer, MATRIX(matrix))
+	}
+
 	// TODO: search
 }
 
 class Pixmap extends Userdata {
 	static _drop = "_wasm_drop_pixmap"
+
 	constructor(arg1, bbox = null, alpha = false) {
 		let pointer = arg1
 		if (arg1 instanceof ColorSpace) {
@@ -493,13 +608,6 @@ class Pixmap extends Userdata {
 			pointer = libmupdf._wasm_new_pixmap_with_bbox(arg1.pointer, RECT(bbox), alpha)
 		}
 		super(pointer)
-	}
-
-	clear(value) {
-		if (typeof value === "undefined")
-			libmupdf._wasm_clear_pixmap(this.pointer)
-		else
-			libmupdf._wasm_clear_pixmap_with_value(this.pointer, value)
 	}
 
 	getBounds() {
@@ -510,20 +618,48 @@ class Pixmap extends Userdata {
 		return [ x, y, x + w, y + w ]
 	}
 
+	clear(value) {
+		if (typeof value === "undefined")
+			libmupdf._wasm_clear_pixmap(this.pointer)
+		else
+			libmupdf._wasm_clear_pixmap_with_value(this.pointer, value)
+	}
+
 	getWidth() {
-		return libmupdf._wasm_pixmap_width(this.pointer)
+		return libmupdf._wasm_pixmap_get_w(this.pointer)
 	}
-
 	getHeight() {
-		return libmupdf._wasm_pixmap_height(this.pointer)
+		return libmupdf._wasm_pixmap_get_h(this.pointer)
 	}
-
 	getX() {
-		return libmupdf._wasm_pixmap_x(this.pointer)
+		return libmupdf._wasm_pixmap_get_x(this.pointer)
+	}
+	getY() {
+		return libmupdf._wasm_pixmap_get_y(this.pointer)
+	}
+	getStride() {
+		return libmupdf._wasm_pixmap_get_stride(this.pointer)
+	}
+	getNumberOfComponents() {
+		return libmupdf._wasm_pixmap_get_n(this.pointer)
+	}
+	getXResolution() {
+		return libmupdf._wasm_pixmap_get_xres(this.pointer)
+	}
+	getYResolution() {
+		return libmupdf._wasm_pixmap_get_yres(this.pointer)
 	}
 
-	getY() {
-		return libmupdf._wasm_pixmap_y(this.pointer)
+	setResolution(x, y) {
+		libmupdf._wasm_pixmap_set_xres(this.pointer, x)
+		libmupdf._wasm_pixmap_set_yres(this.pointer, y)
+	}
+
+	getColorSpace() {
+		let cs = libmupdf._wasm_pixmap_get_colorspace
+		if (cs)
+			return new ColorSpace(cs)
+		return null
 	}
 
 	getPixels() {
@@ -543,6 +679,8 @@ class Pixmap extends Userdata {
 			libmupdf._wasm_drop_buffer(buf)
 		}
 	}
+
+	// TODO: asJPEG(quality)
 }
 
 class StructuredText extends Userdata {
@@ -605,22 +743,190 @@ class StructuredText extends Userdata {
 		}
 	}
 
-	// TODO: search
-	// TODO: highlight
-	// TODO: copy
-	// TODO: snapSelection
-
 	asJSON(scale = 1) {
-		let text_ptr = libmupdf._wasm_print_stext_page_as_json(this.pointer, scale)
-		let text = fromString(text_ptr)
-		libmupdf._wasm_free(text_ptr)
-		return text
+		return fromStringFree(libmupdf._wasm_print_stext_page_as_json(this.pointer, scale))
 	}
-}
 
+	// TODO: highlight(a, b) -> quad[]
+	// TODO: copy(a, b) -> string
+	// TODO: search(needle) -> quad[][]
+}
 
 class Device extends Userdata {
 	static _drop = "_wasm_drop_device"
+
+	static BLEND_MODES = [
+		"Normal",
+		"Multiply",
+		"Screen",
+		"Overlay",
+		"Darken",
+		"Lighten",
+		"ColorDodge",
+		"ColorBurn",
+		"HardLight",
+		"SoftLight",
+		"Difference",
+		"Exclusion",
+		"Hue",
+		"Saturation",
+		"Color",
+		"Luminosity",
+	]
+
+	fillPath(path, evenOdd, ctm, colorspace, color, alpha) {
+		checkType(path, Path)
+		checkMatrix(ctm)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_fill_path(this.pointer, path.pointer, evenOdd, MATRIX(ctm), colorspace.pointer, COLOR(color), alpha)
+	}
+
+	strokePath(path, stroke, ctm, colorspace, color, alpha) {
+		checkType(path, Path)
+		checkType(stroke, StrokeState)
+		checkMatrix(ctm)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_stroke_path(
+			this.pointer,
+			path.pointer,
+			stroke.pointer,
+			MATRIX(ctm),
+			colorspace.pointer,
+			COLOR(color),
+			alpha
+		)
+	}
+
+	clipPath(path, evenOdd, ctm) {
+		checkType(path, Path)
+		checkMatrix(ctm)
+		libmupdf._wasm_clip_path(this.pointer, path.pointer, evenOdd, MATRIX(ctm))
+	}
+
+	clipStrokePath(path, stroke, ctm) {
+		checkType(path, Path)
+		checkType(stroke, StrokeState)
+		checkMatrix(ctm)
+		libmupdf._wasm_clip_stroke_path(this.pointer, path.pointer, stroke.pointer, MATRIX(ctm))
+	}
+
+	fillText(text, ctm, colorspace, color, alpha) {
+		checkType(text, Text)
+		checkMatrix(ctm)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_fill_text(this.pointer, text.pointer, MATRIX(ctm), colorspace.pointer, COLOR(color), alpha)
+	}
+
+	strokeText(text, stroke, ctm, colorspace, color, alpha) {
+		checkType(text, Text)
+		checkType(stroke, StrokeState)
+		checkMatrix(ctm)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_stroke_text(
+			this.pointer,
+			text.pointer,
+			stroke.pointer,
+			MATRIX(ctm),
+			colorspace.pointer,
+			COLOR(color),
+			alpha
+		)
+	}
+
+	clipText(text, ctm) {
+		checkType(text, Text)
+		checkMatrix(ctm)
+		libmupdf._wasm_clip_text(this.pointer, text.pointer, MATRIX(ctm))
+	}
+
+	clipStrokeText(text, stroke, ctm) {
+		checkType(text, Text)
+		checkType(stroke, StrokeState)
+		checkMatrix(ctm)
+		libmupdf._wasm_clip_stroke_text(this.pointer, text.pointer, stroke.pointer, MATRIX(ctm))
+	}
+
+	ignoreText(text, ctm) {
+		checkType(text, Text)
+		checkMatrix(ctm)
+		libmupdf._wasm_ignore_text(this.pointer, text.pointer, MATRIX(ctm))
+	}
+
+	fillShade(shade, ctm, alpha) {
+		checkType(shade, Shade)
+		checkMatrix(ctm)
+		libmupdf._wasm_fill_shade(this.pointer, shade.pointer, MATRIX(ctm), alpha)
+	}
+
+	fillImage(image, ctm, alpha) {
+		checkType(image, Image)
+		checkMatrix(ctm)
+		libmupdf._wasm_fill_image(this.pointer, image.pointer, MATRIX(ctm), alpha)
+	}
+
+	fillImageMask(image, ctm, colorspace, color, alpha) {
+		checkType(image, Image)
+		checkMatrix(ctm)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_fill_image_mask(this.pointer, image.pointer, MATRIX(ctm), colorspace.pointer, COLOR(color), alpha)
+	}
+
+	clipImageMask(image, ctm) {
+		checkType(image, Image)
+		checkMatrix(ctm)
+		libmupdf._wasm_clip_image_mask(this.pointer, image.pointer, MATRIX(ctm))
+	}
+
+	popClip() {
+		libmupdf._wasm_pop_clip(this.pointer)
+	}
+
+	beginMask(area, luminosity, colorspace, color) {
+		checkRect(area)
+		checkType(colorspace, ColorSpace)
+		checkColor(color)
+		libmupdf._wasm_begin_mask(this.pointer, RECT(area), luminosity, colorspace.pointer, COLOR(color))
+	}
+
+	endMask() {
+		libmupdf._wasm_end_mask(this.pointer)
+	}
+
+	beginGroup(area, colorspace, isolated, knockout, blendmode, alpha) {
+		checkRect(area)
+		checkType(colorspace, ColorSpace)
+		blendmode = Device.BLEND_MODES.indexOf(blendmode)
+		libmupdf._wasm_begin_group(this.pointer, RECT(area), colorspace.pointer, isolated, knockout, blendmode, alpha)
+	}
+
+	endGroup() {
+		libmupdf._wasm_end_group(this.pointer)
+	}
+
+	beginTile(area, view, xstep, ystep, ctm, id) {
+		checkRect(area)
+		checkRect(view)
+		checkMatrix(ctm)
+		return libmupdf._wasm_begin_tile(this.pointer, RECT(area), RECT2(view), xstep, ystep, MATRIX(ctm), id)
+	}
+
+	endTile() {
+		libmupdf._wasm_end_tile(this.pointer)
+	}
+
+	beginLayer(name) {
+		libmupdf._wasm_begin_layer(this.pointer, STRING(name))
+	}
+
+	endLayer() {
+		libmupdf._wasm_end_layer(this.pointer)
+	}
+
 	close() {
 		libmupdf._wasm_close_device(this.pointer)
 	}
@@ -1120,12 +1426,7 @@ class PDFAnnotation extends Userdata {
 	}
 
 	getContents() {
-		let text_ptr = libmupdf._wasm_pdf_annot_contents(this.pointer)
-		try {
-			return fromString(text_ptr)
-		} finally {
-			libmupdf._wasm_free(text_ptr)
-		}
+		return fromStringFree(libmupdf._wasm_pdf_annot_contents(this.pointer))
 	}
 
 	setContents(text) {
@@ -1328,9 +1629,6 @@ class PDFAnnotation extends Userdata {
 	}
 
 	// TODO
-	//int pdf_set_annot_field_value(fz_context *ctx, pdf_document *doc, pdf_annot *annot, const char *text, int ignore_trigger_events)
-	// void pdf_set_annot_appearance(fz_context *ctx, pdf_annot *annot, const char *appearance, const char *state, fz_matrix ctm, fz_rect bbox, pdf_obj *res, fz_buffer *contents)
-	// void pdf_set_annot_appearance_from_display_list(fz_context *ctx, pdf_annot *annot, const char *appearance, const char *state, fz_matrix ctm, fz_display_list *list)
 
 	// TODO filespec
 }
@@ -1537,13 +1835,15 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	libmupdf._wasm_init_context()
 
 	// To pass Rect and Matrix as pointer arguments
-	_wasm_rect = libmupdf._wasm_malloc(4 * 4) >> 2
+	_wasm_rect = libmupdf._wasm_malloc(4 * 8) >> 2
 	_wasm_matrix = libmupdf._wasm_malloc(4 * 6) >> 2
+	_wasm_color = libmupdf._wasm_malloc(4 * 4) >> 2
 
 	ColorSpace.DeviceGray = new ColorSpace(libmupdf._wasm_device_gray())
 	ColorSpace.DeviceRGB = new ColorSpace(libmupdf._wasm_device_rgb())
 	ColorSpace.DeviceBGR = new ColorSpace(libmupdf._wasm_device_bgr())
 	ColorSpace.DeviceCMYK = new ColorSpace(libmupdf._wasm_device_cmyk())
+	ColorSpace.Lab = new ColorSpace(libmupdf._wasm_device_lab())
 })
 
 // If running in Node.js environment
