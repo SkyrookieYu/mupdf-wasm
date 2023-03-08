@@ -29,7 +29,6 @@
 // TODO: Text
 // TODO: Path
 
-// TODO: PDFPage
 // TODO: PDFAnnotation
 // TODO: PDFWidget
 // TODO: PDFObject
@@ -692,18 +691,6 @@ pdf_page * wasm_pdf_page_from_fz_page(fz_page *page)
 }
 
 EXPORT
-void wasm_pdf_set_page_labels(pdf_document *doc, int index, int style, char *prefix, int start)
-{
-	VOID(pdf_set_page_labels, doc, index, style, prefix, start)
-}
-
-EXPORT
-void wasm_pdf_delete_page_labels(pdf_document *doc, int index)
-{
-	VOID(pdf_delete_page_labels, doc, index)
-}
-
-EXPORT
 int wasm_pdf_version(pdf_document *doc)
 {
 	INTEGER(pdf_version, doc)
@@ -738,6 +725,96 @@ int wasm_pdf_xref_len(pdf_document *doc)
 }
 
 EXPORT
+fz_image * wasm_pdf_lookup_page_obj(pdf_document *doc, int index)
+{
+	POINTER(pdf_lookup_page_obj, doc, index)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_object(pdf_document *doc, pdf_obj *obj)
+{
+	POINTER(pdf_add_object, doc, obj)
+}
+
+EXPORT
+int wasm_pdf_create_object(pdf_document *doc)
+{
+	INTEGER(pdf_create_object, doc)
+}
+
+EXPORT
+void wasm_pdf_delete_object(pdf_document *doc, int num)
+{
+	VOID(pdf_delete_object, doc, num)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_stream(pdf_document *doc, fz_buffer *buf, pdf_obj *obj, int compress)
+{
+	POINTER(pdf_add_stream, doc, buf, obj, compress)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_simple_font(pdf_document *doc, fz_font *font, int encoding)
+{
+	POINTER(pdf_add_simple_font, doc, font, encoding)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_cjk_font(pdf_document *doc, fz_font *font, int ordering, int wmode, int serif)
+{
+	POINTER(pdf_add_cjk_font, doc, font, ordering, wmode, serif)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_cid_font(pdf_document *doc, fz_font *font)
+{
+	POINTER(pdf_add_cid_font, doc, font)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_image(pdf_document *doc, fz_image *image)
+{
+	POINTER(pdf_add_image, doc, image)
+}
+
+EXPORT
+fz_image * wasm_pdf_load_image(pdf_document *doc, pdf_obj *ref)
+{
+	POINTER(pdf_load_image, doc, ref)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_add_page(pdf_document *doc, fz_rect *mediabox, int rotate, pdf_obj *resources, fz_buffer *contents)
+{
+	POINTER(pdf_add_page, doc, *mediabox, rotate, resources, contents)
+}
+
+EXPORT
+void wasm_pdf_insert_page(pdf_document *doc, int index, pdf_obj *obj)
+{
+	VOID(pdf_insert_page, doc, index, obj)
+}
+
+EXPORT
+void wasm_pdf_delete_page(pdf_document *doc, int index)
+{
+	VOID(pdf_delete_page, doc, index)
+}
+
+EXPORT
+void wasm_pdf_set_page_labels(pdf_document *doc, int index, int style, char *prefix, int start)
+{
+	VOID(pdf_set_page_labels, doc, index, style, prefix, start)
+}
+
+EXPORT
+void wasm_pdf_delete_page_labels(pdf_document *doc, int index)
+{
+	VOID(pdf_delete_page_labels, doc, index)
+}
+
+EXPORT
 fz_buffer * wasm_pdf_write_document_buffer(pdf_document *doc, char *options)
 {
 	fz_buffer *buffer;
@@ -754,10 +831,69 @@ fz_buffer * wasm_pdf_write_document_buffer(pdf_document *doc, char *options)
 	return buffer;
 }
 
-// === PDFObject ===
+// --- PDFPage ---
+
+EXPORT
+pdf_annot * wasm_pdf_first_annot(pdf_page *page)
+{
+	POINTER(pdf_first_annot, page)
+}
+
+EXPORT
+pdf_annot * wasm_pdf_next_annot(pdf_annot *annot)
+{
+	POINTER(pdf_next_annot, annot)
+}
+
+EXPORT
+pdf_annot * wasm_pdf_first_widget(pdf_page *page)
+{
+	POINTER(pdf_first_widget, page)
+}
+
+EXPORT
+pdf_annot * wasm_pdf_next_widget(pdf_annot *annot)
+{
+	POINTER(pdf_next_widget, annot)
+}
+
+EXPORT
+pdf_annot * wasm_pdf_create_annot(pdf_page *page, int type)
+{
+	POINTER(pdf_create_annot, page, type)
+}
+
+EXPORT
+void wasm_pdf_delete_annot(pdf_page *page, pdf_annot *annot)
+{
+	VOID(pdf_delete_annot, page, annot)
+}
+
+EXPORT
+int wasm_pdf_update_page(pdf_page *page)
+{
+	INTEGER(pdf_update_page, page)
+}
+
+EXPORT
+void wasm_pdf_redact_page(pdf_page *page, int black_boxes, int image_method)
+{
+	pdf_redact_options opts = { black_boxes, image_method };
+	VOID(pdf_redact_page, page->doc, page, &opts)
+}
+
+EXPORT
+fz_link * wasm_pdf_create_link(pdf_page *page, fz_rect *bbox, char *uri)
+{
+	POINTER(pdf_create_link, page, *bbox, uri)
+}
+
+// --- PDFObject ---
 
 #define PDF_IS(N) EXPORT int wasm_pdf_is_ ## N (pdf_obj *obj) { INTEGER(pdf_is_ ## N, obj) }
 #define PDF_TO(T,R,N) EXPORT T wasm_pdf_to_ ## N (pdf_obj *obj) { R(pdf_to_ ## N, obj) }
+#define PDF_NEW(N,T) EXPORT pdf_obj* wasm_pdf_new_ ## N (pdf_document *doc, T v) { POINTER(pdf_new_ ## N, doc, v) }
+#define PDF_NEW2(N,T1,T2) EXPORT pdf_obj* wasm_pdf_new_ ## N (pdf_document *doc, T1 v1, T2 v2) { POINTER(pdf_new_ ## N, doc, v1, v2) }
 
 PDF_IS(indirect)
 PDF_IS(bool)
@@ -774,6 +910,54 @@ PDF_TO(int, INTEGER, bool)
 PDF_TO(double, NUMBER, real)
 PDF_TO(char*, POINTER, name)
 PDF_TO(char*, POINTER, text_string)
+
+EXPORT
+pdf_obj * wasm_pdf_new_indirect(pdf_document *doc, int num)
+{
+	POINTER(pdf_new_indirect, doc, num, 0)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_array(pdf_document *doc, int cap)
+{
+	POINTER(pdf_new_array, doc, cap)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_dict(pdf_document *doc, int cap)
+{
+	POINTER(pdf_new_dict, doc, cap)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_bool(int v)
+{
+	return v ? PDF_TRUE : PDF_FALSE;
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_int(int v)
+{
+	POINTER(pdf_new_int, v)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_real(float v)
+{
+	POINTER(pdf_new_real, v)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_name(char *v)
+{
+	POINTER(pdf_new_name, v)
+}
+
+EXPORT
+pdf_obj * wasm_pdf_new_text_string(char *v)
+{
+	POINTER(pdf_new_text_string, v)
+}
 
 EXPORT
 pdf_obj * wasm_pdf_resolve_indirect(pdf_obj *obj)

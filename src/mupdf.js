@@ -385,6 +385,21 @@ class ColorSpace extends Userdata {
 class Font extends Userdata {
 	static _drop = "_wasm_drop_font"
 
+	static ADOBE_CNS = 0
+	static ADOBE_GB = 1
+	static ADOBE_JAPAN = 2
+	static ADOBE_KOREA = 3
+
+	static CJK_ORDERING_BY_LANG = {
+		"zh-Hant": 0,
+		"zh-TW": 0,
+		"zh-HK": 0,
+		"zh-Hans": 1,
+		"zh-CN": 1,
+		"ja": 2,
+		"ko": 3,
+	}
+
 	constructor(arg1, arg2) {
 		let pointer = 0
 		if (typeof arg1 === "number") {
@@ -1312,7 +1327,104 @@ class PDFDocument extends Document {
 		return new PDFObject(libmupdf._wasm_pdf_trailer(this.pointer))
 	}
 
-	saveAsBuffer(options) {
+	createObject() {
+		let num = libmupdf._wasm_pdf_create_object(this.pointer)
+		return fromPDFObject(libmupdf._wasm_pdf_new_indirect(this.pointer, num))
+	}
+
+	newNull(v) { return fromPDFObject(0) }
+	newBool(v) { return fromPDFObject(libmupdf._wasm_pdf_new_bool(num)) }
+	newInteger(v) { return fromPDFObject(libmupdf._wasm_pdf_new_int(num)) }
+	newReal(v) { return fromPDFObject(libmupdf._wasm_pdf_new_real(num)) }
+	newName(v) { return fromPDFObject(libmupdf._wasm_pdf_new_name(num)) }
+	newString(v) { return fromPDFObject(libmupdf._wasm_pdf_new_text_string(num)) }
+
+	newIndirect(v) { return fromPDFObject(libmupdf._wasm_pdf_new_indirect(this.pointer, num)) }
+	newArray(cap=8) { return fromPDFObject(libmupdf._wasm_pdf_new_array(this.pointer, cap)) }
+	newDictionary(cap=8) { return fromPDFObject(libmupdf._wasm_pdf_new_dict(this.pointer, cap)) }
+
+	deleteObject(num) {
+		if (num instanceof PDFObject)
+			num = num.asIndirect()
+		libmupdf._wasm_pdf_delete_object(this.pointer, num)
+	}
+
+	addObject(obj) {
+		checkType(obj, PDFObject)
+		return fromPDFObject(libmupdf._wasm_pdf_add_object(this.pointer, obj.pointer))
+	}
+
+	addStream(buf, obj) {
+		checkType(buf, Buffer)
+		checkType(obj, PDFObject)
+		libmupdf._wasm_pdf_add_stream(this.pointer, buf.pointer, obj.pointer, 0)
+	}
+
+	addRawStream(buf, obj) {
+		checkType(buf, Buffer)
+		checkType(obj, PDFObject)
+		libmupdf._wasm_pdf_add_stream(this.pointer, buf.pointer, obj.pointer, 1)
+	}
+
+	addSimpleFont(font, encoding) {
+		checkType(font, Font)
+		if (encoding === "Latin" || encoding === "Latn") encoding = 0
+		else if (encoding === "Greek" || encoding === "Grek") encoding = 1
+		else if (encoding === "Cyrillic" || encoding === "Cyrl") encoding = 2
+		else encoding = 0
+		return fromPDFObject(libmupdf._wasm_pdf_add_simple_font(this.pointer, font.pointer, encoding))
+	}
+
+	addCJKFont(font, lang, wmode, serif) {
+		checkType(font, Font)
+		if (typeof lang === "string")
+			lang = Font.CJK_ORDERING_BY_LANG[lang]
+		return fromPDFObject(libmupdf._wasm_pdf_add_cjk_font(this.pointer, font.pointer, lang, wmode, serif))
+	}
+
+	addFont(font) {
+		checkType(font, Font)
+		return fromPDFObject(libmupdf._wasm_pdf_add_font(this.pointer, font.pointer))
+	}
+
+	addImage(image) {
+		checkType(image, Image)
+		return fromPDFObject(libmupdf._wasm_pdf_add_image(this.pointer, image.pointer))
+	}
+
+	loadImage(ref) {
+		checkType(ref, PDFObject)
+		return new Image(libmupdf._wasm_pdf_load_image(this.pointer, ref.pointer))
+	}
+
+	findPage(index) {
+		return fromPDFObject(libmupdf._wasm_pdf_lookup_page_obj(this.pointer, index))
+	}
+
+	addPage(mediabox, rotate, resources, contents) {
+		checkRect(mediabox)
+		checkType(resources, PDFObject)
+		checkType(contents, Buffer)
+		return fromPDFObject(
+			libmupdf._wasm_pdf_add_page(
+				this.pointer,
+				RECT(mediabox),
+				resources.pointer,
+				contents.pointer
+			)
+		)
+	}
+
+	insertPage(at, obj) {
+		checkType(obj, PDFObject)
+		libmupdf._wasm_pdf_insert_page(this.pointer, at, obj.pointer)
+	}
+
+	deletePage(at) {
+		libmupdf._wasm_pdf_delete_page(this.pointer, at)
+	}
+
+	saveToBuffer(options) {
 		// TODO: object options to string options?
 		return new Buffer(libmupdf._wasm_pdf_write_document_buffer(this.pointer, STRING(options)))
 	}
@@ -1772,8 +1884,6 @@ class PDFWidget extends PDFAnnotation {
 }
 
 function fromPDFObject(ptr) {
-	if (ptr === 0)
-		return null
 	return new PDFObject(ptr)
 }
 
