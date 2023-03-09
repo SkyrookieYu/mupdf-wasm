@@ -199,6 +199,12 @@ GETP(stext_char, fz_quad, quad)
 GET(stext_char, float, size)
 GET(stext_char, fz_font*, font)
 
+PDF_GET(embedded_file_params, const char*, filename)
+PDF_GET(embedded_file_params, const char*, mimetype)
+PDF_GET(embedded_file_params, int, size)
+PDF_GET(embedded_file_params, int, created)
+PDF_GET(embedded_file_params, int, modified)
+
 // --- Buffer ---
 
 EXPORT
@@ -697,6 +703,110 @@ int wasm_pdf_version(pdf_document *doc)
 }
 
 EXPORT
+int wasm_pdf_was_repaired(pdf_document *doc)
+{
+	INTEGER(pdf_was_repaired, doc)
+}
+
+EXPORT
+int wasm_pdf_has_unsaved_changes(pdf_document *doc)
+{
+	INTEGER(pdf_has_unsaved_changes, doc)
+}
+
+EXPORT
+int wasm_pdf_count_versions(pdf_document *doc)
+{
+	INTEGER(pdf_count_versions, doc)
+}
+
+EXPORT
+int wasm_pdf_count_unsaved_versions(pdf_document *doc)
+{
+	INTEGER(pdf_count_unsaved_versions, doc)
+}
+
+EXPORT
+int wasm_pdf_validate_change_history(pdf_document *doc)
+{
+	INTEGER(pdf_validate_change_history, doc)
+}
+
+EXPORT
+void wasm_pdf_enable_journal(pdf_document *doc)
+{
+	VOID(pdf_enable_journal, doc)
+}
+
+EXPORT
+int wasm_pdf_undoredo_state_position(pdf_document *doc)
+{
+	int position, count;
+	TRY ({
+		position = pdf_undoredo_state(ctx, doc, &count);
+	})
+	return position;
+}
+
+EXPORT
+int wasm_pdf_undoredo_state_count(pdf_document *doc)
+{
+	int position, count;
+	TRY ({
+		position = pdf_undoredo_state(ctx, doc, &count);
+	})
+	return count;
+}
+
+EXPORT
+char * wasm_pdf_undoredo_step(pdf_document *doc, int step)
+{
+	POINTER(pdf_undoredo_step, doc, step)
+}
+
+EXPORT
+void wasm_pdf_begin_operation(pdf_document *doc, char *op)
+{
+	VOID(pdf_begin_operation, doc, op)
+}
+
+EXPORT
+void wasm_pdf_begin_implicit_operation(pdf_document *doc)
+{
+	VOID(pdf_begin_implicit_operation, doc)
+}
+
+EXPORT
+void wasm_pdf_end_operation(pdf_document *doc)
+{
+	VOID(pdf_end_operation, doc)
+}
+
+EXPORT
+void wasm_pdf_undo(pdf_document *doc)
+{
+	VOID(pdf_undo, doc)
+}
+
+EXPORT
+void wasm_pdf_redo(pdf_document *doc)
+{
+	VOID(pdf_redo, doc)
+}
+
+EXPORT
+int wasm_pdf_can_undo(pdf_document *doc)
+{
+	INTEGER(pdf_can_undo, doc)
+}
+
+EXPORT
+int wasm_pdf_can_redo(pdf_document *doc)
+{
+	INTEGER(pdf_can_redo, doc)
+}
+
+EXPORT
 char * wasm_pdf_document_language(pdf_document *doc)
 {
 	static char str[8];
@@ -815,6 +925,28 @@ void wasm_pdf_delete_page_labels(pdf_document *doc, int index)
 }
 
 EXPORT
+int wasm_pdf_is_embedded_file(pdf_obj *ref)
+{
+	INTEGER(pdf_is_embedded_file, ref)
+}
+
+EXPORT
+pdf_embedded_file_params * wasm_pdf_get_embedded_file_params(pdf_obj *ref)
+{
+	static pdf_embedded_file_params out;
+	TRY ({
+		pdf_get_embedded_file_params(ctx, ref, &out);
+	})
+	return &out;
+}
+
+EXPORT
+fz_buffer * wasm_pdf_add_embedded_file(pdf_document *doc, char *filename, char *mimetype, fz_buffer *contents, int created, int modified, int checksum)
+{
+	POINTER(pdf_add_embedded_file, doc, filename, mimetype, contents, created, modified, checksum)
+}
+
+EXPORT
 fz_buffer * wasm_pdf_write_document_buffer(pdf_document *doc, char *options)
 {
 	fz_buffer *buffer;
@@ -887,6 +1019,8 @@ fz_link * wasm_pdf_create_link(pdf_page *page, fz_rect *bbox, char *uri)
 {
 	POINTER(pdf_create_link, page, *bbox, uri)
 }
+
+// --- PDFAnnotation ---
 
 // --- PDFObject ---
 
@@ -987,6 +1121,48 @@ EXPORT
 pdf_obj * wasm_pdf_dict_gets(pdf_obj *obj, char *key)
 {
 	POINTER(pdf_dict_gets, obj, key)
+}
+
+EXPORT
+void wasm_pdf_dict_put(pdf_obj *obj, pdf_obj *key, pdf_obj *val)
+{
+	VOID(pdf_dict_put, obj, key, val)
+}
+
+EXPORT
+void wasm_pdf_dict_puts(pdf_obj *obj, char *key, pdf_obj *val)
+{
+	VOID(pdf_dict_puts, obj, key, val)
+}
+
+EXPORT
+void wasm_pdf_dict_del(pdf_obj *obj, pdf_obj *key)
+{
+	VOID(pdf_dict_del, obj, key)
+}
+
+EXPORT
+void wasm_pdf_dict_dels(pdf_obj *obj, char *key)
+{
+	VOID(pdf_dict_dels, obj, key)
+}
+
+EXPORT
+void wasm_pdf_array_put(pdf_obj *obj, int key, pdf_obj *val)
+{
+	VOID(pdf_array_put, obj, key, val)
+}
+
+EXPORT
+void wasm_pdf_array_push(pdf_obj *obj, pdf_obj *val)
+{
+	VOID(pdf_array_push, obj, val)
+}
+
+EXPORT
+void wasm_pdf_array_delete(pdf_obj *obj, int key)
+{
+	VOID(pdf_array_delete, obj, key)
 }
 
 EXPORT

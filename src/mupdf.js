@@ -65,15 +65,23 @@ function allocateUTF8(str) {
 let _wasm_rect = 0
 let _wasm_matrix = 0
 let _wasm_color = 0
-let _wasm_string = 0
+let _wasm_string = [ 0, 0 ]
+
+function STRING_N(s,i) {
+	if (_wasm_string[i]) {
+		libmupdf._wasm_free(_wasm_string[i])
+		_wasm_string[i] = i
+	}
+	_wasm_string[i] = allocateUTF8(s)
+	return _wasm_string[i]
+}
 
 function STRING(s) {
-	if (_wasm_string) {
-		libmupdf._wasm_free(_wasm_string)
-		_wasm_string = 0
-	}
-	_wasm_string = allocateUTF8(s)
-	return _wasm_string
+	return STRING_N(s, 0)
+}
+
+function STRING2(s) {
+	return STRING_N(s, 1)
 }
 
 function RECT(r) {
@@ -391,6 +399,10 @@ class Font extends Userdata {
 	static ADOBE_KOREA = 3
 
 	static CJK_ORDERING_BY_LANG = {
+		"Adobe-CNS1": 0,
+		"Adobe-GB1": 1,
+		"Adobe-Japan1": 2,
+		"Adobe-Korea1": 3,
 		"zh-Hant": 0,
 		"zh-TW": 0,
 		"zh-HK": 0,
@@ -1346,28 +1358,31 @@ class PDFDocument extends Document {
 	deleteObject(num) {
 		if (num instanceof PDFObject)
 			num = num.asIndirect()
+		else
+			checkType(num, "number")
 		libmupdf._wasm_pdf_delete_object(this.pointer, num)
 	}
 
 	addObject(obj) {
-		checkType(obj, PDFObject)
+		obj = PDFOBJ(obj)
 		return fromPDFObject(libmupdf._wasm_pdf_add_object(this.pointer, obj.pointer))
 	}
 
 	addStream(buf, obj) {
+		obj = PDFOBJ(obj)
 		checkType(buf, Buffer)
-		checkType(obj, PDFObject)
 		libmupdf._wasm_pdf_add_stream(this.pointer, buf.pointer, obj.pointer, 0)
 	}
 
 	addRawStream(buf, obj) {
+		obj = PDFOBJ(obj)
 		checkType(buf, Buffer)
-		checkType(obj, PDFObject)
 		libmupdf._wasm_pdf_add_stream(this.pointer, buf.pointer, obj.pointer, 1)
 	}
 
 	addSimpleFont(font, encoding) {
 		checkType(font, Font)
+		checkType(encoding, "string")
 		if (encoding === "Latin" || encoding === "Latn") encoding = 0
 		else if (encoding === "Greek" || encoding === "Grek") encoding = 1
 		else if (encoding === "Cyrillic" || encoding === "Cyrl") encoding = 2
@@ -1398,12 +1413,14 @@ class PDFDocument extends Document {
 	}
 
 	findPage(index) {
+		checkType(index, "number")
 		return fromPDFObject(libmupdf._wasm_pdf_lookup_page_obj(this.pointer, index))
 	}
 
 	addPage(mediabox, rotate, resources, contents) {
+		resources = PDFOBJ(resources)
 		checkRect(mediabox)
-		checkType(resources, PDFObject)
+		checkType(rotate, "number")
 		checkType(contents, Buffer)
 		return fromPDFObject(
 			libmupdf._wasm_pdf_add_page(
@@ -1416,12 +1433,63 @@ class PDFDocument extends Document {
 	}
 
 	insertPage(at, obj) {
-		checkType(obj, PDFObject)
+		obj = PDFOBJ(obj)
+		checkType(at, "number")
 		libmupdf._wasm_pdf_insert_page(this.pointer, at, obj.pointer)
 	}
 
 	deletePage(at) {
+		checkType(at, "number")
 		libmupdf._wasm_pdf_delete_page(this.pointer, at)
+	}
+
+	isEmbeddedFile(ref) {
+		checkType(ref, PDFObject)
+		return libmupdf._wasm_pdf_is_embedded_file(ref.pointer)
+	}
+
+	addEmbeddedFile(filename, mimetype, contents, created, modified, checksum = false) {
+		checkType(filename, "string")
+		checkType(mimetype, "string")
+		checkType(contents, Buffer)
+		checkType(created, Date)
+		checkType(modified, Date)
+		checkType(checksum, "boolean")
+		return fromPDFObject(
+			libmupdf._wasm_pdf_add_embedded_file(
+				this.pointer,
+				STRING(filename),
+				STRING2(mimetype),
+				created.getTime() / 1000 | 0,
+				modified.getTime() / 1000 | 0,
+				checksum
+			)
+		)
+	}
+
+	getEmbeddedFileParams(ref) {
+		checkType(ref, PDFObject)
+		let ptr = libmupdf._wasm_pdf_get_embedded_file_params(ref.pointer)
+		return {
+			filename:
+				fromString(libmupdf._wasm_pdf_get_embedded_file_params_filename(ptr)),
+			mimetype:
+				fromString(libmupdf._wasm_pdf_get_embedded_file_params_mimetype(ptr)),
+			size:
+				libmupdf._wasm_pdf_get_embedded_file_params_filename(ptr),
+			creationDate:
+				new Date(libmupdf._wasm_pdf_get_embedded_file_params_created(ptr) * 1000),
+			modificationDate:
+				new Date(libmupdf._wasm_pdf_get_embedded_file_params_modified(ptr) * 1000),
+		}
+	}
+
+	getEmbeddedFileContents(ref) {
+		checkType(ref, PDFObject)
+		let contents = libmupdf._wasm_pdf_load_embedded_file_contents(ref.pointer)
+		if (contents)
+			return new Buffer(contents)
+		return null
 	}
 
 	saveToBuffer(options) {
@@ -1442,6 +1510,75 @@ class PDFDocument extends Document {
 
 	deletePageLabels(index) {
 		libmupdf._wasm_pdf_delete_page_labels(this.pointer, index)
+	}
+
+	wasRepaired() {
+		return libmupdf._wasm_pdf_was_repaired(this.pointer)
+	}
+
+	hasUnsavedChanges() {
+		return libmupdf._wasm_pdf_has_unsaved_changes(this.pointer)
+	}
+
+	countVersions() {
+		return libmupdf._wasm_pdf_count_versions(this.pointer)
+	}
+
+	countUnsavedVersions() {
+		return libmupdf._wasm_pdf_count_unsaved_versions(this.pointer)
+	}
+
+	validateChangeHistory() {
+		return libmupdf._wasm_pdf_validate_change_history(this.pointer)
+	}
+
+	canBeSavedIncrementally() {
+		return libmupdf._wasm_pdf_can_be_saved_incrementally(this.pointer)
+	}
+
+	enableJournal() {
+		libmupdf._wasm_pdf_enable_journal(this.pointer)
+	}
+
+	getJournal() {
+		let position = libmupdf._wasm_pdf_undoredo_state_position(this.pointer)
+		let n = libmupdf._wasm_pdf_undoredo_state_count(this.pointer)
+		let steps = []
+		for (let i = 0; i < n; ++i)
+			steps.push(
+				fromString(
+					libmupdf._wasm_pdf_undoredo_step(this.pointer, i),
+				)
+			)
+		return { position, steps }
+	}
+
+	beginOperation(op) {
+		libmupdf._wasm_pdf_begin_operation(this.pointer, STRING(op))
+	}
+
+	beginImplicitOperation() {
+		libmupdf._wasm_pdf_begin_implicit_operation(this.pointer)
+	}
+
+	endOperation(op) {
+		libmupdf._wasm_pdf_end_operation(this.pointer)
+	}
+
+	canUndo() {
+		return libmupdf._wasm_pdf_can_undo(this.pointer)
+	}
+
+	canRedo() {
+		return libmupdf._wasm_pdf_can_redo(this.pointer)
+	}
+
+	undo() {
+		libmupdf._wasm_pdf_undo(this.pointer)
+	}
+
+	redo() {
+		libmupdf._wasm_pdf_redo(this.pointer)
 	}
 }
 
@@ -1511,6 +1648,119 @@ class PDFPage extends Page {
 	createLink(bbox, uri) {
 		checkRect(bbox)
 		return new Link(libmupdf._wasm_pdf_create_link(this.pointer, RECT(bbox), STRING(uri)))
+	}
+}
+
+function fromPDFObject(ptr) {
+	return new PDFObject(ptr)
+}
+
+function PDFOBJ(doc, obj) {
+	if (obj instanceof PDFObject)
+		return obj
+	if (obj === null || obj === undefined)
+		return doc.newNull()
+	if (typeof obj === "string")
+		return doc.newString(obj)
+	if (typeof obj === "number")
+		return obj | (0 === obj) ? doc.newInteger(obj) : doc.newReal(obj)
+	if (typeof obj === "boolean")
+		return doc.newBool(obj)
+	if (obj instanceof Array) {
+		let result = doc.newArray(obj.length)
+		for (let item of obj)
+			result.push(PDFOBJ(item))
+		return result
+	}
+	if (obj instanceof Object) {
+		let result = doc.newDictionary()
+		for (let key in obj)
+			result.put(key, PDFOBJ(obj[key]))
+		return result
+	}
+	throw new TypeError("cannot convert value to PDFObject")
+}
+
+class PDFObject extends Userdata {
+	static _drop = "_wasm_pdf_drop_obj"
+
+	constructor(pointer) {
+		super(libmupdf._wasm_pdf_keep_obj(pointer))
+	}
+
+	isNull() { return this.pointer === 0 }
+	isIndirect() { return libmupdf._wasm_pdf_is_indirect(this.pointer) }
+	isBoolean() { return libmupdf._wasm_pdf_is_bool(this.pointer) }
+	isInteger() { return libmupdf._wasm_pdf_is_int(this.pointer) }
+	isNumber() { return libmupdf._wasm_pdf_is_number(this.pointer) }
+	isName() { return libmupdf._wasm_pdf_is_name(this.pointer) }
+	isString() { return libmupdf._wasm_pdf_is_string(this.pointer) }
+	isArray() { return libmupdf._wasm_pdf_is_array(this.pointer) }
+	isDictionary() { return libmupdf._wasm_pdf_is_dict(this.pointer) }
+	isStream() { return libmupdf._wasm_pdf_is_stream(this.pointer) }
+
+	asIndirect() { return libmupdf._wasm_pdf_to_num(this.pointer) }
+	asBoolean() { return libmupdf._wasm_pdf_to_bool(this.pointer) }
+	asNumber() { return libmupdf._wasm_pdf_to_number(this.pointer) }
+	asName() { return libmupdf._wasm_pdf_to_name(this.pointer) }
+	asString() { return fromString(libmupdf._wasm_pdf_to_text_string(this.pointer)) }
+
+	readStream() { return new Buffer(libmupdf._wasm_pdf_load_stream(this.pointer)) }
+	readRawStream() { return new Buffer(libmupdf._wasm_pdf_load_raw_stream(this.pointer)) }
+
+	resolve() {
+		return fromPDFObject(libmupdf._wasm_pdf_resolve_indirect(this.pointer))
+	}
+
+	get length() {
+		return libmupdf._wasm_pdf_array_len(this.pointer)
+	}
+
+	get(key) {
+		if (typeof key === "number")
+			return fromPDFObject(libmupdf._wasm_pdf_array_get(this.pointer, key))
+		else if (typeof key === PDFObject)
+			return fromPDFObject(libmupdf._wasm_pdf_dict_get(this.pointer, key.pointer))
+		else
+			return fromPDFObject(libmupdf._wasm_pdf_dict_gets(this.pointer, STRING(key)))
+	}
+
+	put(key, value) {
+		value = PDFOBJ(value)
+		if (typeof key === "number")
+			libmupdf._wasm_pdf_array_put(this.pointer, key, value.pointer)
+		else if (typeof key === PDFObject)
+			libmupdf._wasm_pdf_dict_put(this.pointer, key.pointer, value.pointer)
+		else
+			libmupdf._wasm_pdf_dict_puts(this.pointer, STRING(key), value.pointer)
+	}
+
+	push(value) {
+		value = PDFOBJ(value)
+		libmupdf._wasm_pdf_array_push(this.pointer, value.pointer)
+	}
+
+	delete(key) {
+		if (typeof key === "number")
+			libmupdf._wasm_pdf_array_delete(this.pointer, key)
+		else if (typeof key === PDFObject)
+			libmupdf._wasm_pdf_dict_del(this.pointer, key.pointer)
+		else
+			libmupdf._wasm_pdf_dict_dels(this.pointer, STRING(key))
+	}
+
+	valueOf() {
+		if (this.isNull()) return null
+		if (this.isBoolean()) return this.asBoolean()
+		if (this.isNumber()) return this.asNumber()
+		if (this.isName()) return this.asName()
+		if (this.isString()) return this.asString()
+		if (this.isIndirect()) return "R"
+		return this
+	}
+
+	toString(tight = true, ascii = true) {
+		return fromStringFree(libmupdf._wasm_pdf_sprint_obj(this.pointer, tight, ascii))
 	}
 }
 
@@ -1881,93 +2131,6 @@ class PDFWidget extends PDFAnnotation {
 	static SIGNATURE_DEFAULT_APPEARANCE = 63;
 
 	// TODO
-}
-
-function fromPDFObject(ptr) {
-	return new PDFObject(ptr)
-}
-
-class PDFObject extends Userdata {
-	static _drop = "_wasm_pdf_drop_obj"
-
-	constructor(pointer) {
-		super(libmupdf._wasm_pdf_keep_obj(pointer))
-	}
-
-	isNull() { return this.pointer === 0 }
-	isIndirect() { return libmupdf._wasm_pdf_is_indirect(this.pointer) }
-	isBoolean() { return libmupdf._wasm_pdf_is_bool(this.pointer) }
-	isInteger() { return libmupdf._wasm_pdf_is_int(this.pointer) }
-	isNumber() { return libmupdf._wasm_pdf_is_number(this.pointer) }
-	isName() { return libmupdf._wasm_pdf_is_name(this.pointer) }
-	isString() { return libmupdf._wasm_pdf_is_string(this.pointer) }
-	isArray() { return libmupdf._wasm_pdf_is_array(this.pointer) }
-	isDictionary() { return libmupdf._wasm_pdf_is_dict(this.pointer) }
-	isStream() { return libmupdf._wasm_pdf_is_stream(this.pointer) }
-
-	asIndirect() { return libmupdf._wasm_pdf_to_num(this.pointer) }
-	asBoolean() { return libmupdf._wasm_pdf_to_bool(this.pointer) }
-	asNumber() { return libmupdf._wasm_pdf_to_number(this.pointer) }
-	asName() { return libmupdf._wasm_pdf_to_name(this.pointer) }
-	asString() { return fromString(libmupdf._wasm_pdf_to_text_string(this.pointer)) }
-
-	readStream() { return new Buffer(libmupdf._wasm_pdf_load_stream(this.pointer)) }
-	readRawStream() { return new Buffer(libmupdf._wasm_pdf_load_raw_stream(this.pointer)) }
-
-	resolve() {
-		return fromPDFObject(libmupdf._wasm_pdf_resolve_indirect(this.pointer))
-	}
-
-	get length() {
-		return libmupdf._wasm_pdf_array_len(this.pointer)
-	}
-
-	get(key) {
-		if (typeof key === "number")
-			return fromPDFObject(libmupdf._wasm_pdf_array_get(this.pointer, key))
-		else if (typeof key === PDFObject)
-			return fromPDFObject(libmupdf._wasm_pdf_dict_get(this.pointer, key.pointer))
-		else
-			return fromPDFObject(libmupdf._wasm_pdf_dict_gets(this.pointer, STRING(key)))
-	}
-
-	put(key, value) {
-		checkType(value, PDFObject)
-		if (typeof key === "number")
-			libmupdf._wasm_pdf_array_put(this.pointer, key, value)
-		else if (typeof key === PDFObject)
-			libmupdf._wasm_pdf_dict_put(this.pointer, key.pointer, value)
-		else
-			libmupdf._wasm_pdf_dict_puts(this.pointer, STRING(key), value)
-	}
-
-	push(value) {
-		checkType(value, PDFObject)
-		libmupdf._wasm_pdf_array_push(this.pointer, value.pointer)
-	}
-
-	delete(key) {
-		if (typeof key === "number")
-			libmupdf._wasm_pdf_array_delete(this.pointer, key)
-		else if (typeof key === PDFObject)
-			libmupdf._wasm_pdf_dict_del(this.pointer, key.pointer)
-		else
-			libmupdf._wasm_pdf_dict_dels(this.pointer, STRING(key))
-	}
-
-	valueOf() {
-		if (this.isNull()) return null
-		if (this.isBoolean()) return this.asBoolean()
-		if (this.isNumber()) return this.asNumber()
-		if (this.isName()) return this.asName()
-		if (this.isString()) return this.asString()
-		if (this.isIndirect()) return "R"
-		return this
-	}
-
-	toString(tight = true, ascii = true) {
-		return fromStringFree(libmupdf._wasm_pdf_sprint_obj(this.pointer, tight, ascii))
-	}
 }
 
 
