@@ -23,15 +23,7 @@
 // TODO: Story
 // TODO: DOM
 
-// TODO: Device
-// TODO: Image
-// TODO: Font
-// TODO: Text
-// TODO: Path
-
-// TODO: PDFAnnotation
 // TODO: PDFWidget
-// TODO: PDFObject
 // TODO: PDFGraftMap
 
 // TODO: WASMDevice with callbacks
@@ -46,7 +38,9 @@
 static fz_context *ctx;
 
 static fz_matrix out_matrix;
+static fz_point out_point;
 static fz_rect out_rect;
+static fz_quad out_quad;
 
 #define EXPORT EMSCRIPTEN_KEEPALIVE
 
@@ -57,7 +51,9 @@ static fz_rect out_rect;
 #define INTEGER(F, ...) int p; TRY({ p = F(ctx, __VA_ARGS__); }) return p;
 #define NUMBER(F, ...) float p; TRY({ p = F(ctx, __VA_ARGS__); }) return p;
 #define MATRIX(F, ...) TRY({ out_matrix = F(ctx, __VA_ARGS__); }) return &out_matrix;
+#define POINT(F, ...) TRY({ out_point = F(ctx, __VA_ARGS__); }) return &out_point;
 #define RECT(F, ...) TRY({ out_rect = F(ctx, __VA_ARGS__); }) return &out_rect;
+#define QUAD(F, ...) TRY({ out_quad = F(ctx, __VA_ARGS__); }) return &out_quad;
 #define VOID(F, ...) TRY({ F(ctx, __VA_ARGS__); })
 
 __attribute__((noinline)) void
@@ -1021,6 +1017,183 @@ fz_link * wasm_pdf_create_link(pdf_page *page, fz_rect *bbox, char *uri)
 }
 
 // --- PDFAnnotation ---
+
+EXPORT
+fz_rect * wasm_pdf_bound_annot(pdf_annot *annot)
+{
+	RECT(pdf_bound_annot, annot)
+}
+
+EXPORT
+void wasm_pdf_run_annot(pdf_annot *annot, fz_device *dev, fz_matrix *ctm)
+{
+	VOID(pdf_run_annot, annot, dev, *ctm, NULL)
+}
+
+EXPORT
+fz_pixmap * wasm_pdf_new_pixmap_from_annot(pdf_annot *annot, fz_matrix *ctm, fz_colorspace *colorspace, int alpha)
+{
+	POINTER(pdf_new_pixmap_from_annot, annot, *ctm, colorspace, NULL, alpha)
+}
+
+EXPORT
+fz_display_list * wasm_pdf_new_display_list_from_annot(pdf_annot *annot)
+{
+	POINTER(pdf_new_display_list_from_annot, annot)
+}
+
+EXPORT
+int wasm_pdf_update_annot(pdf_annot *annot)
+{
+	INTEGER(pdf_update_annot, annot)
+}
+
+#define PDF_ANNOT_GET(T,R,N) EXPORT T wasm_pdf_annot_ ## N (pdf_annot *annot) { R(pdf_annot_ ## N, annot) }
+#define PDF_ANNOT_GET1(T,R,N) EXPORT T wasm_pdf_annot_ ## N (pdf_annot *annot, int idx) { R(pdf_annot_ ## N, annot, idx) }
+#define PDF_ANNOT_GET2(T,R,N) EXPORT T wasm_pdf_annot_ ## N (pdf_annot *annot, int a, int b) { R(pdf_annot_ ## N, annot, a, b) }
+#define PDF_ANNOT_SET(T,N) EXPORT void wasm_pdf_set_annot_ ## N (pdf_annot *annot, T v) { VOID(pdf_set_annot_ ## N, annot, v) }
+#define PDF_ANNOT_GETSET(T,R,N) PDF_ANNOT_GET(T,R,N) PDF_ANNOT_SET(T,N)
+
+PDF_ANNOT_GET(pdf_obj*, POINTER, obj)
+PDF_ANNOT_GET(int, INTEGER, type)
+
+PDF_ANNOT_GETSET(int, INTEGER, flags)
+PDF_ANNOT_GETSET(char*, POINTER, contents)
+PDF_ANNOT_GETSET(char*, POINTER, author)
+PDF_ANNOT_GETSET(int, INTEGER, creation_date)
+PDF_ANNOT_GETSET(int, INTEGER, modification_date)
+PDF_ANNOT_GETSET(float, NUMBER, border)
+PDF_ANNOT_GETSET(float, NUMBER, border_width)
+PDF_ANNOT_GETSET(int, INTEGER, border_style)
+PDF_ANNOT_GETSET(int, INTEGER, border_effect)
+PDF_ANNOT_GETSET(float, NUMBER, border_effect_intensity)
+PDF_ANNOT_GETSET(float, NUMBER, opacity)
+PDF_ANNOT_GETSET(pdf_obj*, POINTER, filespec)
+PDF_ANNOT_GETSET(int, INTEGER, quadding)
+PDF_ANNOT_GETSET(int, INTEGER, is_open)
+PDF_ANNOT_GETSET(char*, POINTER, icon_name)
+
+PDF_ANNOT_GET(fz_rect*, RECT, rect)
+PDF_ANNOT_GET(fz_rect*, RECT, popup)
+
+PDF_ANNOT_GET(int, INTEGER, quad_point_count)
+PDF_ANNOT_GET1(fz_quad*, QUAD, quad_point)
+
+PDF_ANNOT_GET(int, INTEGER, vertex_count)
+PDF_ANNOT_GET1(fz_point*, POINT, vertex)
+
+PDF_ANNOT_GET(int, INTEGER, ink_list_count)
+PDF_ANNOT_GET1(int, INTEGER, ink_list_stroke_count)
+PDF_ANNOT_GET2(fz_point*, POINT, ink_list_stroke_vertex)
+
+EXPORT
+char * wasm_pdf_annot_language(pdf_annot *doc)
+{
+	static char str[8];
+	TRY ({
+		fz_string_from_text_language(str, pdf_annot_language(ctx, doc));
+	})
+	return str;
+}
+
+EXPORT
+void wasm_pdf_set_annot_language(pdf_annot *doc, char *str)
+{
+	VOID(pdf_set_annot_language, doc, fz_text_language_from_string(str))
+}
+
+EXPORT
+void wasm_pdf_set_annot_popup(pdf_annot *annot, fz_rect *rect)
+{
+	VOID(pdf_set_annot_popup, annot, *rect)
+}
+
+EXPORT
+void wasm_pdf_set_annot_rect(pdf_annot *annot, fz_rect *rect)
+{
+	VOID(pdf_set_annot_rect, annot, *rect)
+}
+
+EXPORT
+void wasm_pdf_clear_annot_quad_points(pdf_annot *annot)
+{
+	VOID(pdf_clear_annot_quad_points, annot)
+}
+
+EXPORT
+void wasm_pdf_clear_annot_vertices(pdf_annot *annot)
+{
+	VOID(pdf_clear_annot_vertices, annot)
+}
+
+EXPORT
+void wasm_pdf_clear_annot_ink_list(pdf_annot *annot)
+{
+	VOID(pdf_clear_annot_ink_list, annot)
+}
+
+EXPORT
+void wasm_pdf_add_annot_quad_point(pdf_annot *annot, fz_quad *quad)
+{
+	VOID(pdf_add_annot_quad_point, annot, *quad)
+}
+
+EXPORT
+void wasm_pdf_add_annot_vertex(pdf_annot *annot, fz_point *point)
+{
+	VOID(pdf_add_annot_vertex, annot, *point)
+}
+
+EXPORT
+void wasm_pdf_add_annot_ink_list_stroke(pdf_annot *annot)
+{
+	VOID(pdf_add_annot_ink_list_stroke, annot)
+}
+
+EXPORT
+void wasm_pdf_add_annot_ink_list_stroke_vertex(pdf_annot *annot, fz_point *point)
+{
+	VOID(pdf_add_annot_ink_list_stroke_vertex, annot, *point)
+}
+
+EXPORT
+int wasm_pdf_annot_line_ending_styles_start(pdf_annot *annot)
+{
+	enum pdf_line_ending start;
+	enum pdf_line_ending end;
+	TRY ({
+		pdf_annot_line_ending_styles(ctx, annot, &start, &end);
+	})
+	return start;
+}
+
+EXPORT
+int wasm_pdf_annot_line_ending_styles_end(pdf_annot *annot)
+{
+	enum pdf_line_ending start;
+	enum pdf_line_ending end;
+	TRY ({
+		pdf_annot_line_ending_styles(ctx, annot, &start, &end);
+	})
+	return end;
+}
+
+EXPORT
+void wasm_pdf_set_annot_line_ending_styles(pdf_annot *annot, int start, int end)
+{
+	VOID(pdf_set_annot_line_ending_styles, annot, start, end)
+}
+
+// TODO: color
+// TODO: interior_color
+// TODO: border_dash
+// TODO: get default appearance
+
+EXPORT
+void wasm_pdf_set_default_appearance(pdf_annot *annot, char *font, float size, int ncolor, float *color)
+{
+	VOID(pdf_set_default_appearance, annot, font, size, ncolor, color)
+}
 
 // --- PDFObject ---
 

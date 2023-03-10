@@ -50,9 +50,14 @@ function checkMatrix(value) {
 		throw new TypeError("expected matrix")
 }
 
+function checkQuad(value) {
+	if (!Array.isArray(value) || value.length !== 8)
+		throw new TypeError("expected quad")
+}
+
 function checkColor(value) {
-	if (!Array.isArray(value) || value.length < 1 || value.length > 4)
-		throw new TypeError("expected matrix")
+	if (!Array.isArray(value) || (value.length !== 1 && value.length !== 3 && value.length !== 4))
+		throw new TypeError("expected color array")
 }
 
 function allocateUTF8(str) {
@@ -63,6 +68,7 @@ function allocateUTF8(str) {
 }
 
 let _wasm_rect = 0
+let _wasm_quad = 0
 let _wasm_matrix = 0
 let _wasm_color = 0
 let _wasm_string = [ 0, 0 ]
@@ -82,6 +88,18 @@ function STRING(s) {
 
 function STRING2(s) {
 	return STRING_N(s, 1)
+}
+
+function QUAD(q) {
+	libmupdf.HEAPF32[_wasm_quad + 0] = q[0]
+	libmupdf.HEAPF32[_wasm_quad + 1] = q[1]
+	libmupdf.HEAPF32[_wasm_quad + 2] = q[2]
+	libmupdf.HEAPF32[_wasm_quad + 3] = q[3]
+	libmupdf.HEAPF32[_wasm_quad + 4] = q[4]
+	libmupdf.HEAPF32[_wasm_quad + 5] = q[5]
+	libmupdf.HEAPF32[_wasm_quad + 6] = q[6]
+	libmupdf.HEAPF32[_wasm_quad + 7] = q[7]
+	return _wasm_quad << 2
 }
 
 function RECT(r) {
@@ -1655,6 +1673,10 @@ function fromPDFObject(ptr) {
 	return new PDFObject(ptr)
 }
 
+function keepPDFObject(ptr) {
+	return new PDFObject(libmupdf._wasm_pdf_keep_obj(ptr))
+}
+
 function PDFOBJ(doc, obj) {
 	if (obj instanceof PDFObject)
 		return obj
@@ -1856,18 +1878,25 @@ class PDFAnnotation extends Userdata {
 		return new DisplayList(libmupdf._wasm_pdf_new_display_list_from_annot(this.pointer))
 	}
 
-	update() {
-		return !!libmupdf._wasm_pdf_update_annot(this.pointer)
+	getObject() {
+		return keepPDFObject(libmupdf._wasm_pdf_annot_obj(this.pointer))
 	}
 
-	getObject() {
-		let obj = libmupdf._wasm_pdf_annot_obj(this.pointer)
-		return new PDFObject(libmupdf._wasm_pdf_keep_obj(obj))
+	update() {
+		return !!libmupdf._wasm_pdf_update_annot(this.pointer)
 	}
 
 	getType() {
 		let type = libmupdf._wasm_pdf_annot_type(this.pointer)
 		return PDFAnnotation.TYPES[type]
+	}
+
+	getLanguage() {
+		return fromString(libmupdf._wasm_pdf_annot_language(this.pointer))
+	}
+
+	setLanguage(lang) {
+		libmupdf._wasm_pdf_set_annot_language(this.pointer, STRING(lang))
 	}
 
 	getFlags() {
@@ -1879,25 +1908,37 @@ class PDFAnnotation extends Userdata {
 	}
 
 	getContents() {
-		return fromStringFree(libmupdf._wasm_pdf_annot_contents(this.pointer))
+		return fromString(libmupdf._wasm_pdf_annot_contents(this.pointer))
 	}
 
 	setContents(text) {
 		libmupdf._wasm_pdf_set_annot_contents(this.pointer, STRING(text))
 	}
 
-	getPopup() {
-		return fromRect(libmupdf._wasm_pdf_annot_popup(this.pointer))
+	getAuthor() {
+		return fromString(libmupdf._wasm_pdf_annot_author(this.pointer))
 	}
 
-	setPopup(rect) {
-		libmupdf._wasm_pdf_set_annot_popup(this.pointer, RECT(rect))
+	setAuthor(text) {
+		libmupdf._wasm_pdf_set_annot_author(this.pointer, STRING(text))
 	}
 
-	// TODO
+	getCreationDate() {
+		return new Date(libmupdf._wasm_pdf_annot_creation_date(this.pointer) * 1000)
+	}
 
-	hasRect() {
-		return libmupdf._wasm_pdf_annot_has_rect(this.pointer)
+	setCreationDate(date) {
+		checkType(date, Date)
+		return new Date(libmupdf._wasm_pdf_annot_creation_date(this.pointer, date.getTime() / 1000)
+	}
+
+	getModificationDate() {
+		return new Date(libmupdf._wasm_pdf_annot_modification_date(this.pointer) * 1000)
+	}
+
+	setModificationDate(date) {
+		checkType(date, Date)
+		return new Date(libmupdf._wasm_pdf_annot_modification_date(this.pointer, date.getTime() / 1000)
 	}
 
 	getRect() {
@@ -1905,60 +1946,37 @@ class PDFAnnotation extends Userdata {
 	}
 
 	setRect(rect) {
-		libmupdf._wasm_pdf_set_annot_rect(this.pointer, RECT(rect))
+		checkRect(rect)
+		return fromRect(libmupdf._wasm_pdf_set_annot_rect(this.pointer, RECT(rect)))
 	}
 
-	hasOpen() {
-		return libmupdf._wasm_pdf_annot_has_open(this.pointer)
+	getPopup() {
+		return fromRect(libmupdf._wasm_pdf_annot_popup(this.pointer))
 	}
 
+	setPopup(rect) {
+		checkType(rect)
+		libmupdf._wasm_pdf_set_annot_popup(this.pointer, RECT(rect))
+	}
+
+	// TODO: rename to getIsOpen ?
 	isOpen() {
 		return libmupdf._wasm_pdf_annot_is_open(this.pointer)
 	}
 
 	setIsOpen(isOpen) {
-		return libmupdf._wasm_pdf_annot_set_is_open(this.pointer, isOpen ? 1 : 0)
+		return libmupdf._wasm_pdf_annot_set_is_open(this.pointer, isOpen)
 	}
 
-	hasIconName() {
-		return libmupdf._wasm_pdf_annot_has_icon_name(this.pointer)
-	}
-
-	getIconName() {
-		// the string returned by this function is static and doesn't need to be freed
+	getIcon() {
 		return fromString(libmupdf._wasm_pdf_annot_icon_name(this.pointer))
 	}
 
-	setIconName(name) {
-		libmupdf._wasm_pdf_set_annot_icon_name(this.pointer, STRING(name))
+	setIcon(text) {
+		libmupdf._wasm_pdf_set_annot_icon_name(this.pointer, STRING(text))
 	}
 
-	// TODO - line endings
-
-	getBorder() {
-		return libmupdf._wasm_pdf_annot_border(this.pointer)
-	}
-
-	setBorder(width) {
-		libmupdf._wasm_pdf_set_annot_border(this.pointer, width)
-	}
-
-	// TODO - fz_document_language
-
-	getLanguage() {
-		// the string returned by this function is static and doesn't need to be freed
-		return fromString(libmupdf._wasm_pdf_annot_language(this.pointer))
-	}
-
-	setLanguage(lang) {
-		libmupdf._wasm_pdf_set_annot_language(this.pointer, STRING(lang))
-	}
-
-	// TODO
-	//wasm_pdf_annot_quadding
-	//wasm_pdf_set_annot_quadding
-
-	opacity() {
+	getOpacity() {
 		return libmupdf._wasm_pdf_annot_opacity(this.pointer)
 	}
 
@@ -1966,120 +1984,102 @@ class PDFAnnotation extends Userdata {
 		libmupdf._wasm_pdf_set_annot_opacity(this.pointer, opacity)
 	}
 
-	// TODO
-	// pdf_annot_MK_BG
-	// pdf_set_annot_color
-	// pdf_annot_interior_color
-
-	hasLine() {
-		return libmupdf._wasm_pdf_annot_has_line(this.pointer)
+	getQuadding() {
+		return libmupdf._wasm_pdf_annot_quadding(this.pointer)
 	}
 
-	getLine() {
-		let line_ptr = libmupdf._wasm_pdf_annot_line(this.pointer)
-		return [ Point.fromPtr(line_ptr), Point.fromPtr(line_ptr + 8) ]
+	setQuadding(quadding) {
+		return libmupdf._wasm_pdf_set_annot_quadding(this.pointer, quadding)
 	}
 
-	setLine(a, b) {
-		libmupdf._wasm_pdf_set_annot_line(this.pointer, a[0], a[1], b[0], b[1])
+	getFileSpec() {
+		return keepPDFObject(libmupdf._wasm_pdf_annot_filespec(this.pointer))
 	}
 
-	hasVertices() {
-		return libmupdf._wasm_pdf_annot_has_vertices(this.pointer)
+	setFileSpec(fs) {
+		fs = PDFOBJ(fs)
+		return libmupdf._wasm_pdf_set_annot_filespec(this.pointer, fs.pointer)
 	}
 
-	vertexCount() {
-		return libmupdf._wasm_pdf_annot_vertex_count(this.pointer)
+	getQuadPoints() {
+		let n = libmupdf._wasm_pdf_annot_quad_point_count(this.pointer)
+		let result = []
+		for (let i = 0; i < n; ++i)
+			result.push(fromQuad(libmupdf._wasm_pdf_annot_quad_point(this.pointer, i))
+		return result
 	}
 
-	vertex(i) {
-		return Point.fromPtr(libmupdf._wasm_pdf_annot_vertex(this.pointer, i))
+	clearQuadPoints() {
+		libmupdf._wasm_pdf_annot_clear_quad_points(this.pointer)
 	}
 
-	// TODO pdf_set_annot_vertices
+	addQuadPoint(quad) {
+		checkQuad(quad)
+		libmupdf._wasm_pdf_annot_add_quad_point(this.pointer, QUAD(quad))
+	}
+
+	setQuadPoints(quadlist) {
+		this.clearQuadPoints()
+		for (let quad of quadlist)
+			this.addQuadPoint(quad)
+	}
+
+	getVertices() {
+		let n = libmupdf._wasm_pdf_annot_vertex_count(this.pointer)
+		let result = new Array(n)
+		for (let i = 0; i < n; ++i)
+			result[i] = fromPoint(libmupdf._wasm_pdf_annot_vertex(this.pointer, i))
+		return result
+	}
 
 	clearVertices() {
-		libmupdf._wasm_pdf_clear_annot_vertices(this.pointer)
+		libmupdf._wasm_pdf_annot_clear_vertices(this.pointer)
 	}
 
-	addVertex(point) {
-		checkType(point, Point)
-		libmupdf._wasm_pdf_add_annot_vertex(this.pointer, point[0], point[1])
+	addVertex(vertex) {
+		checkPoint(vertex)
+		libmupdf._wasm_pdf_annot_add_vertex(this.pointer, POINT(vertex))
 	}
 
-	setVertex(i, point) {
-		checkType(point, Point)
-		libmupdf._wasm_pdf_set_annot_vertex(this.pointer, i, point[0], point[1])
+	setVertices(vertexlist) {
+		this.clearVertices()
+		for (let vertex of vertexlist)
+			this.addVertex(vertex)
 	}
 
-	// TODO - quad points
-
-	modificationDate() {
-		// libmupdf uses seconds since epoch, but Date expects milliseconds
-		return new Date(libmupdf._wasm_pdf_annot_modification_date(this.pointer) * 1000)
+	getInkList() {
+		let n = libmupdf._wasm_pdf_annot_ink_list_count(this.pointer)
+		let result = new Array(n)
+		for (let i = 0; i < n; ++i) {
+			let m = libmupdf._wasm_pdf_annot_ink_list_stroke_count(this.pointer, i)
+			result[i] = new Array(m)
+			for (let k = 0; k < m; ++k)
+				result[i][k] = fromPoint(libmupdf._wasm_pdf_annot_ink_list_stroke_vertex(this.pointer, i, k))
+		}
+		return result
 	}
 
-	creationDate() {
-		// libmupdf uses seconds since epoch, but Date expects milliseconds
-		return new Date(libmupdf._wasm_pdf_annot_creation_date(this.pointer) * 1000)
+	clearInkList() {
+		libmupdf._wasm_pdf_annot_clear_ink_list(this.pointer)
 	}
 
-	setModificationDate(date) {
-		checkType(date, Date)
-		// Date stores milliseconds since epoch, but libmupdf expects seconds
-		libmupdf._wasm_pdf_set_annot_modification_date(this.pointer, date.getTime() / 1000)
+	addInkListStroke() {
+		libmupdf._wasm_pdf_annot_add_ink_list_stroke(this.pointer)
 	}
 
-	setCreationDate(date) {
-		checkType(date, Date)
-		// Date stores milliseconds since epoch, but libmupdf expects seconds
-		libmupdf._wasm_pdf_set_annot_creation_date(this.pointer, date.getTime() / 1000)
+	addInkListStrokeVertex(v) {
+		checkPoint(v)
+		libmupdf._wasm_pdf_annot_add_ink_list_stroke_vertex(this.pointer, POINT(v))
 	}
 
-	hasAuthor() {
-		return libmupdf._wasm_pdf_annot_has_author(this.pointer)
-	}
-
-	author() {
-		let string_ptr = libmupdf._wasm_pdf_annot_author(this.pointer)
-		try {
-			return fromString(string_ptr)
-		} finally {
-			libmupdf._wasm_free(string_ptr)
+	setInkList(inklist) {
+		this.clearInkList()
+		for (let stroke of inklist) {
+			this.addInkListStroke()
+			for (let vertex of stroke)
+				this.addInkListStrokeVertex(vertex)
 		}
 	}
-
-	setAuthor(name) {
-		libmupdf._wasm_pdf_set_annot_author(this.pointer, STRING(name))
-	}
-
-	// TODO - default appearance
-
-	fieldFlags() {
-		return libmupdf._wasm_pdf_annot_field_flags(this.pointer)
-	}
-
-	fieldValue() {
-		let string_ptr = libmupdf._wasm_pdf_annot_field_value(this.pointer)
-		try {
-			return fromString(string_ptr)
-		} finally {
-			libmupdf._wasm_free(string_ptr)
-		}
-	}
-
-	fieldLabel() {
-		let string_ptr = libmupdf._wasm_pdf_annot_field_label(this.pointer)
-		try {
-			return fromString(string_ptr)
-		} finally {
-			libmupdf._wasm_free(string_ptr)
-		}
-	}
-
-	// TODO
-
-	// TODO filespec
 }
 
 class PDFWidget extends PDFAnnotation {
@@ -2290,6 +2290,7 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	_wasm_rect = libmupdf._wasm_malloc(4 * 8) >> 2
 	_wasm_matrix = libmupdf._wasm_malloc(4 * 6) >> 2
 	_wasm_color = libmupdf._wasm_malloc(4 * 4) >> 2
+	_wasm_quad = libmupdf._wasm_malloc(4 * 8) >> 2
 
 	ColorSpace.DeviceGray = new ColorSpace(libmupdf._wasm_device_gray())
 	ColorSpace.DeviceRGB = new ColorSpace(libmupdf._wasm_device_rgb())
