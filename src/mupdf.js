@@ -311,6 +311,12 @@ class Userdata {
 		this.constructor._drop(this.pointer)
 		this.pointer = 0
 	}
+
+	// Custom "console.log" formatting for Node
+	[Symbol.for("nodejs.util.inspect.custom")](depth, opts) {
+		return this.toString()
+	}
+
 	toString() {
 		return `[${this.constructor.name} ${this.pointer}]`
 	}
