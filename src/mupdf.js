@@ -1371,7 +1371,7 @@ class PDFDocument extends Document {
 		return fromPDFObject(libmupdf._wasm_pdf_new_indirect(this, num))
 	}
 
-	newNull(v) { return fromPDFObject(0) }
+	newNull() { return PDFObject.Null }
 	newBool(v) { return fromPDFObject(libmupdf._wasm_pdf_new_bool(num)) }
 	newInteger(v) { return fromPDFObject(libmupdf._wasm_pdf_new_int(num)) }
 	newReal(v) { return fromPDFObject(libmupdf._wasm_pdf_new_real(num)) }
@@ -1679,6 +1679,8 @@ class PDFPage extends Page {
 }
 
 function fromPDFObject(ptr) {
+	if (ptr === 0)
+		return PDFObject.Null
 	return new PDFObject(ptr)
 }
 
@@ -1719,7 +1721,7 @@ class PDFObject extends Userdata {
 		super(libmupdf._wasm_pdf_keep_obj(pointer))
 	}
 
-	isNull() { return this === 0 }
+	isNull() { return this === PDFObject.Null }
 	isIndirect() { return libmupdf._wasm_pdf_is_indirect(this) }
 	isBoolean() { return libmupdf._wasm_pdf_is_bool(this) }
 	isInteger() { return libmupdf._wasm_pdf_is_int(this) }
@@ -2306,6 +2308,8 @@ mupdf.ready = libmupdf(libmupdf_injections).then((m) => {
 	ColorSpace.DeviceBGR = new ColorSpace(libmupdf._wasm_device_bgr())
 	ColorSpace.DeviceCMYK = new ColorSpace(libmupdf._wasm_device_cmyk())
 	ColorSpace.Lab = new ColorSpace(libmupdf._wasm_device_lab())
+
+	PDFOboject.Null = new PDFObject(0)
 })
 
 // If running in Node.js environment
