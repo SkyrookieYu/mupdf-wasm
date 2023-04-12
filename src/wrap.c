@@ -106,7 +106,9 @@ REFS(stream)
 REFS(colorspace)
 REFS(pixmap)
 REFS(font)
+REFS(stroke_state)
 REFS(image)
+REFS(shade)
 REFS(path)
 REFS(text)
 REFS(device)
@@ -128,6 +130,7 @@ PDF_REFS(obj)
 #define GETU(S,T,F,U) EXPORT T wasm_ ## S ## _get_ ## F (fz_ ## S *p) { return p->U; }
 #define GET(S,T,F) EXPORT T wasm_ ## S ## _get_ ## F (fz_ ## S *p) { return p->F; }
 #define SET(S,T,F) EXPORT void wasm_ ## S ## _set_ ## F (fz_ ## S *p, T v) { p->F = v; }
+#define GETSET(S,T,F) GET(S,T,F) SET(S,T,F)
 
 #define PDF_GET(S,T,F) EXPORT T wasm_ ## S ## _get_ ## F (pdf_ ## S *p) { return p->F; }
 #define PDF_SET(S,T,F) EXPORT void wasm_ ## S ## _set_ ## F (pdf_ ## S *p, T v) { p->F = v; }
@@ -154,6 +157,15 @@ SET(pixmap, int, xres)
 SET(pixmap, int, yres)
 
 GET(font, char*, name)
+
+GETSET(stroke_state, int, start_cap)
+GETSET(stroke_state, int, dash_cap)
+GETSET(stroke_state, int, end_cap)
+GETSET(stroke_state, int, linejoin)
+GETSET(stroke_state, float, linewidth)
+GETSET(stroke_state, float, miterlimit)
+GETSET(stroke_state, float, dash_phase)
+// TODO: dash_len, dash_array
 
 GET(image, int, w)
 GET(image, int, h)
@@ -241,6 +253,18 @@ EXPORT fz_colorspace * wasm_device_bgr(void) { return fz_device_bgr(ctx); }
 EXPORT fz_colorspace * wasm_device_cmyk(void) { return fz_device_cmyk(ctx); }
 EXPORT fz_colorspace * wasm_device_lab(void) { return fz_device_lab(ctx); }
 
+// --- StrokeState ---
+
+EXPORT
+fz_stroke_state * wasm_new_stroke_state(void)
+{
+	fz_stroke_state *p = NULL;
+	TRY({
+		p = fz_new_stroke_state(ctx);
+	})
+	return p;
+}
+
 // --- Pixmap ---
 
 EXPORT
@@ -307,6 +331,14 @@ EXPORT
 fz_pixmap * wasm_convert_pixmap(fz_pixmap *pixmap, fz_colorspace *colorspace, int keep_alpha)
 {
 	POINTER(fz_convert_pixmap, pixmap, colorspace, NULL, NULL, fz_default_color_params, keep_alpha)
+}
+
+// --- Shade ---
+
+EXPORT
+fz_rect * wasm_bound_shade(fz_shade *shade)
+{
+	RECT(fz_bound_shade, shade, fz_identity)
 }
 
 // --- DisplayList ---
@@ -607,6 +639,12 @@ EXPORT
 int wasm_outline_get_page(fz_document *doc, fz_outline *outline)
 {
 	INTEGER(fz_page_number_from_location, doc, outline->page)
+}
+
+EXPORT
+void wasm_layout_document(fz_document *doc, float w, float h, float em)
+{
+	VOID(fz_layout_document, doc, w, h, em)
 }
 
 // --- Page ---
@@ -1190,9 +1228,9 @@ void wasm_pdf_set_annot_line_ending_styles(pdf_annot *annot, int start, int end)
 // TODO: get default appearance
 
 EXPORT
-void wasm_pdf_set_default_appearance(pdf_annot *annot, char *font, float size, int ncolor, float *color)
+void wasm_pdf_set_annot_default_appearance(pdf_annot *annot, char *font, float size, int ncolor, float *color)
 {
-	VOID(pdf_set_default_appearance, annot, font, size, ncolor, color)
+	VOID(pdf_set_annot_default_appearance, annot, font, size, ncolor, color)
 }
 
 // --- PDFObject ---
