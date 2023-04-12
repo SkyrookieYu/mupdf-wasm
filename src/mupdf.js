@@ -2140,6 +2140,19 @@ class PDFAnnotation extends Userdata {
 				this.addInkListStrokeVertex(vertex)
 		}
 	}
+
+	// TODO: line ending styles
+	// TODO: color
+	// TODO: interior_color
+	// TODO: border dash
+	// TODO: get default appearance
+
+	setDefaultAppearance(fontName, size, color) {
+		checkType(fontName, "string")
+		checkType(size, "number")
+		checkColor(color)
+		libmupdf._wasm_pdf_set_annot_default_appearance(STRING(fontName), size, color.length, COLOR(color))
+	}
 }
 
 class PDFWidget extends PDFAnnotation {
